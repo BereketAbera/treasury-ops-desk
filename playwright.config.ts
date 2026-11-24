@@ -19,7 +19,12 @@ export default defineConfig({
     trace: 'retain-on-failure',
     serviceWorkers: 'allow',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } }],
+  // Chromium runs everything. Firefox and WebKit run the tests tagged @smoke: one pass through each main flow.
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },
+    { name: 'firefox', grep: /@smoke/, use: { ...devices['Desktop Firefox'], viewport: { width: 1440, height: 900 } } },
+    { name: 'webkit', grep: /@smoke/, use: { ...devices['Desktop Safari'], viewport: { width: 1440, height: 900 } } },
+  ],
   webServer: liveUrl
     ? undefined
     : {
