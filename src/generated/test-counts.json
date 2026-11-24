@@ -1,13 +1,13 @@
 {
-  "unit": 127,
+  "unit": 141,
   "component": 42,
   "endToEnd": {
-    "total": 105,
+    "total": 140,
     "projects": [
       {
         "name": "chromium",
         "label": "Chromium",
-        "tests": 93,
+        "tests": 128,
         "smoke": false
       },
       {

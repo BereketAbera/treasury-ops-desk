@@ -66,6 +66,13 @@ await shot('unknown-outcome-desktop', {}, async (page) => {
   await page.getByTestId('check-status').waitFor()
 })
 
+await shot('batch-unknown-desktop', {}, async (page) => {
+  await page.goto(`${base}/batches/new?sample=1&simulate=batch-timeout`)
+  await page.getByTestId('batch-check-summary').waitFor()
+  await page.getByTestId('submit-batch').click()
+  await page.getByTestId('check-status').waitFor()
+})
+
 await shot('batch-result-desktop', {}, async (page) => {
   await page.goto(`${base}/batches/new?sample=1&simulate=partial-batch`)
   await page.getByTestId('submit-batch').click()
