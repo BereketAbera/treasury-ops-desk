@@ -58,7 +58,7 @@ export const SCENARIOS: Scenario[] = [
   {
     id: 'timeout-lost',
     label: 'Next submit times out, payout not received',
-    watch: 'Same timeout, but the request never reached the API. Check status finds nothing and only then offers a resend with the same key. Acts on a single payout submit, not on a batch.',
+    watch: 'Same timeout, but the request never reached the API. Check status finds nothing and only then offers a resend with the same key. Acts on the next payout submit or batch submit.',
     sticky: false,
     shots: 1,
     tryPath: '/payouts/new?prefill=1',
@@ -103,7 +103,7 @@ export const SCENARIOS: Scenario[] = [
   {
     id: 'batch-timeout',
     label: 'Next batch submit times out, batch received',
-    watch: 'The batch is booked, but the answer never arrives. The page says the outcome is unknown and lists the batch under Recent batches. Submitting again reuses the key and gets the first result.',
+    watch: 'The batch is booked, but the answer never arrives. The page says the outcome is unknown, locks the form and offers Check status, not a resend. The check finds the batch and opens its result.',
     sticky: false,
     shots: 1,
     tryPath: '/batches/new?sample=1',

@@ -3,7 +3,7 @@ import { isMinorString } from '@/ds/utils/money'
 import { feeFor, sourceForTarget } from '@/lib/currencies'
 import { findRoute, isPurposeCode, type PayoutRoute } from '@/lib/routes'
 import type { Batch, BatchItem, BatchItemInput, CreatePayoutBody, Failure, Payout, Quote } from '@/lib/types'
-import { REFERENCE_PATTERN } from '@/lib/validation'
+import { NAME_LENGTH_PROBLEM, nameLengthOk, REFERENCE_PATTERN } from '@/lib/validation'
 import { advance, db, resetDb, save, schedule, visiblePayouts } from './db'
 import { consume, isActive } from './scenario'
 import { externalReferenceFor, mulberry32 } from './seed'
@@ -36,6 +36,13 @@ function fail(
   headers: Record<string, string> = {},
 ) {
   return json(request, { code, message, fields, correlationId: correlationOf(request) }, status, headers)
+}
+
+/** Marks an answer as the first result of a repeated key. */
+const REPLAYED = { 'Idempotent-Replayed': 'true' }
+
+function keyReused(request: Request, what: 'payout' | 'batch' | 'retry') {
+  return fail(request, 409, 'idempotency_key_reused', `This idempotency key was already used for a different ${what}.`)
 }
 
 async function latency(): Promise<void> {
@@ -89,7 +96,9 @@ function checkInput(input: Partial<PayoutInput>): Checked {
   const fields: Record<string, string> = {}
   const route = findRoute(String(input.routeId ?? ''))
   if (!REFERENCE_PATTERN.test(String(input.reference ?? ''))) fields.reference = 'The reference is missing or malformed.'
-  if (!input.beneficiary?.name?.trim()) fields.beneficiaryName = 'The beneficiary name is required.'
+  const name = String(input.beneficiary?.name ?? '').trim()
+  if (name === '') fields.beneficiaryName = 'The beneficiary name is required.'
+  else if (!nameLengthOk(name)) fields.beneficiaryName = NAME_LENGTH_PROBLEM
   if (!input.beneficiary?.bank?.trim()) fields.bank = 'The beneficiary bank is required.'
   if (!route) {
     fields.routeId = 'This route does not exist.'
@@ -265,10 +274,10 @@ export const handlers = [
     const known = state.keys[key]
     if (known?.payoutId) {
       if (known.fingerprint !== print) {
-        return fail(request, 409, 'idempotency_key_reused', 'This idempotency key was already used for a different payout.')
+        return keyReused(request, 'payout')
       }
       const original = state.payouts.find((payout) => payout.id === known.payoutId)
-      return json(request, original, 201, { 'Idempotent-Replayed': 'true' })
+      return json(request, original, 201, REPLAYED)
     }
 
     const checked = checkInput(body)
@@ -304,12 +313,14 @@ export const handlers = [
     return json(request, payout, 201)
   }),
 
+  // Every submit and every retry can be looked up by its key: was it received, and what did it make?
   http.get('/api/idempotency-keys/:key', async ({ request, params }) => {
     await latency()
     const state = db()
     const record = state.keys[String(params.key)]
-    const payout = record?.payoutId ? (state.payouts.find((item) => item.id === record.payoutId) ?? null) : null
-    return json(request, { key: params.key, received: payout !== null, payout })
+    const payout = state.payouts.find((item) => item.id === record?.payoutId) ?? null
+    const batch = state.batches.find((item) => item.id === record?.batchId) ?? null
+    return json(request, { key: params.key, received: payout !== null || batch !== null, payout, batch, retried: record?.retried ?? null })
   }),
 
   http.post('/api/payouts/:id/status-check', async ({ request, params }) => {
@@ -332,10 +343,14 @@ export const handlers = [
 
   http.post('/api/payouts/:id/retry', async ({ request, params }) => {
     await latency()
+    const key = request.headers.get('Idempotency-Key')
+    if (!key) return fail(request, 400, 'idempotency_key_required', 'Send an Idempotency-Key header with every retry.')
     const now = Date.now()
     const state = db(now)
     const payout = state.payouts.find((item) => item.id === params.id)
     if (!payout) return fail(request, 404, 'not_found', 'No payout with this ID.')
+    const print = fingerprint({ retry: payout.id })
+    if (state.keys[key]) return state.keys[key].fingerprint === print ? json(request, payout, 200, REPLAYED) : keyReused(request, 'retry')
     if (payout.status !== 'failed' || !payout.failure?.retryable) {
       return fail(request, 409, 'not_retryable', 'This payout cannot be retried in its current state.')
     }
@@ -345,6 +360,7 @@ export const handlers = [
     payout.updatedAt = at
     payout.timeline.push({ status: 'processing', at, note: 'Retried by an operator.' })
     schedule(payout.id, now, 0)
+    state.keys[key] = { fingerprint: print, payoutId: payout.id }
     save()
     return json(request, payout)
   }),
@@ -361,6 +377,11 @@ export const handlers = [
   }),
 
   http.post('/api/batches', async ({ request }) => {
+    // The request is lost on the way in: nothing is recorded and no answer is sent.
+    if (consume('timeout-lost')) {
+      await delay('infinite')
+      return undefined
+    }
     await latency()
     const key = request.headers.get('Idempotency-Key')
     if (!key) return fail(request, 400, 'idempotency_key_required', 'Send an Idempotency-Key header with every batch.')
@@ -380,9 +401,9 @@ export const handlers = [
     const known = state.keys[key]
     if (known?.batchId) {
       if (known.fingerprint !== print) {
-        return fail(request, 409, 'idempotency_key_reused', 'This idempotency key was already used for a different batch.')
+        return keyReused(request, 'batch')
       }
-      return json(request, state.batches.find((batch) => batch.id === known.batchId), 201, { 'Idempotent-Replayed': 'true' })
+      return json(request, state.batches.find((batch) => batch.id === known.batchId), 201, REPLAYED)
     }
 
     const partial = consume('partial-batch')
@@ -432,10 +453,16 @@ export const handlers = [
 
   http.post('/api/batches/:id/retry', async ({ request, params }) => {
     await latency()
+    const key = request.headers.get('Idempotency-Key')
+    if (!key) return fail(request, 400, 'idempotency_key_required', 'Send an Idempotency-Key header with every retry.')
     const body = (await request.json()) as { items?: { line: number; itemKey: string }[] }
     const now = Date.now()
-    const batch = db(now).batches.find((item) => item.id === params.id)
+    const state = db(now)
+    const batch = state.batches.find((item) => item.id === params.id)
     if (!batch) return fail(request, 404, 'not_found', 'No batch with this ID.')
+    const print = fingerprint({ retry: batch.id, items: body.items })
+    const known = state.keys[key]
+    if (known) return known.fingerprint === print ? json(request, { batch, retried: known.retried ?? [] }, 200, REPLAYED) : keyReused(request, 'retry')
     const requested = Array.isArray(body.items) ? body.items : []
     const retried: number[] = []
     for (const entry of requested) {
@@ -447,6 +474,7 @@ export const handlers = [
       bookItem(batch, item, now)
       retried.push(item.line)
     }
+    state.keys[key] = { fingerprint: print, batchId: batch.id, retried }
     save()
     return json(request, { batch, retried })
   }),

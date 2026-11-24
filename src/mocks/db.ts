@@ -22,6 +22,8 @@ interface KeyRecord {
   fingerprint: string
   payoutId?: string
   batchId?: string
+  /** The lines a batch retry sent. */
+  retried?: number[]
 }
 
 export interface DbState {

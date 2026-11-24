@@ -34,6 +34,12 @@ export const FIELD_ORDER: DraftField[] = [
 ]
 
 export const REFERENCE_PATTERN = /^[A-Z0-9][A-Z0-9-]{3,19}$/
+export const NAME_LENGTH = { min: 2, max: 70 }
+export const NAME_LENGTH_PROBLEM = `The name must be ${NAME_LENGTH.min} to ${NAME_LENGTH.max} characters.`
+
+export function nameLengthOk(name: string): boolean {
+  return name.length >= NAME_LENGTH.min && name.length <= NAME_LENGTH.max
+}
 
 export function emptyDraft(): PayoutDraft {
   return { reference: '', beneficiaryName: '', bank: '', account: '', routeId: '', amount: '', purposeCode: '' }
@@ -65,7 +71,7 @@ export function validateDraft(draft: PayoutDraft): DraftValidation {
 
   const name = draft.beneficiaryName.trim()
   if (name === '') errors.beneficiaryName = 'Enter the beneficiary name.'
-  else if (name.length < 2 || name.length > 70) errors.beneficiaryName = 'The name must be 2 to 70 characters.'
+  else if (!nameLengthOk(name)) errors.beneficiaryName = NAME_LENGTH_PROBLEM
 
   if (draft.bank.trim() === '') errors.bank = 'Enter the beneficiary bank or wallet provider.'
 
