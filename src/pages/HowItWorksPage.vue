@@ -3,7 +3,7 @@ import { RouterLink } from 'vue-router'
 import { DsStatusBadge } from '@/ds'
 import counts from '@/generated/test-counts.json'
 
-// Written by scripts/test-counts.mjs from the test runners' own listings, as part of every build.
+// Written by scripts/test-counts.mjs from a Vitest run and Playwright's own listing, as part of every build.
 const browsers = counts.endToEnd.projects
 </script>
 
@@ -43,10 +43,12 @@ const browsers = counts.endToEnd.projects
             <tr>
               <th scope="row">Requests</th>
               <td>
-                Every call is a real <code>fetch</code> to <code>/api/...</code> with <code>Idempotency-Key</code>,
-                <code>X-Correlation-Id</code> and <code>X-Attempt</code> headers. They show in the browser's Network tab.
+                Every call to the payout API is a real <code>fetch</code> to <code>/api/...</code> with
+                <code>X-Correlation-Id</code> and <code>X-Attempt</code> headers. Submits and retries, of a payout or a batch,
+                also carry <code>Idempotency-Key</code>. They show in the browser's Network tab. Two requests carry none of
+                these and are not in the request log: the start-up probe (<code>/api/health</code>) and the sample file.
               </td>
-              <td>A service worker (Mock Service Worker) answers them inside your browser. There is no server.</td>
+              <td>A service worker (Mock Service Worker) answers the API calls inside your browser. There is no API server.</td>
             </tr>
             <tr>
               <th scope="row">Data</th>
@@ -63,8 +65,11 @@ const browsers = counts.endToEnd.projects
             </tr>
             <tr>
               <th scope="row">Idempotency</th>
-              <td>The mock stores the first result under each key and returns it for a repeat, with <code>Idempotent-Replayed: true</code>.</td>
-              <td>Keys are kept for the tab's life. A real API would expire them, for example after 24 hours.</td>
+              <td>
+                The mock stores the first accepted result under each key and returns it for a repeat, with
+                <code>Idempotent-Replayed: true</code>. A rejected request is not stored, so a corrected form can use the same key.
+              </td>
+              <td>Keys are kept until the tab closes or the demo data is reset. A real API would expire them, for example after 24 hours.</td>
             </tr>
             <tr>
               <th scope="row">Eventual consistency</th>
@@ -88,7 +93,10 @@ const browsers = counts.endToEnd.projects
 
     <section id="answers" class="card how__section">
       <h2>What the screen does with each answer</h2>
-      <p>The rule: only resend when it is known to be safe, and say which case this is.</p>
+      <p>
+        The rule, for every submit and retry of a payout or a batch: only resend when it is known to be safe, and say which
+        case this is. While an outcome is unknown, the form or button that sent it cannot send it again, after a reload as well.
+      </p>
       <div class="table-scroll" role="region" aria-label="Handling of each answer" tabindex="0">
         <table class="plain-table">
           <thead>
@@ -102,43 +110,44 @@ const browsers = counts.endToEnd.projects
             <tr>
               <th scope="row">201</th>
               <td>Accepted.</td>
-              <td>The payout appears in the table at once as <DsStatusBadge status="awaiting_confirmation" />, then settles through polling.</td>
+              <td>A single payout appears in the table at once as <DsStatusBadge status="awaiting_confirmation" />, then settles through polling. A batch opens its result page.</td>
             </tr>
             <tr>
-              <th scope="row">201 with replay header</th>
+              <th scope="row">201, or 200 for a retry, with the replay header</th>
               <td>This key was already used. The first result is returned.</td>
               <td>"Already received, not sent twice."</td>
             </tr>
             <tr>
-              <th scope="row">503, 429, 502, 504</th>
+              <th scope="row">408, 425, 429, 502, 503, 504</th>
               <td>Temporary failure. Safe to resend because the key is the same.</td>
               <td>Up to 3 attempts with a growing wait and a visible count, then a manual "Retry with the same key".</td>
             </tr>
             <tr>
-              <th scope="row">422, 409, other 4xx</th>
+              <th scope="row">422, 409, every other 4xx</th>
               <td>A final answer. The same request will get it again.</td>
-              <td>The reason, tied to the fields where possible, and no retry button.</td>
+              <td>The reason, tied to the fields where possible, and no "Retry with the same key".</td>
             </tr>
             <tr>
-              <th scope="row">Timeout, dropped connection, 500, an unreadable 2xx</th>
+              <th scope="row">Timeout, dropped connection, 500, any other 5xx, an unreadable 2xx</th>
               <td>No usable answer. The work may or may not have happened.</td>
-              <td><DsStatusBadge status="outcome_unknown" /> with "Check status" and no resend, until the check says "received" or "not received, safe to resend".</td>
+              <td>"We could not confirm this payout" (or batch, or retry) with "Check status" and no resend, until the check finds it or says "Not received, safe to resend".</td>
             </tr>
           </tbody>
         </table>
       </div>
       <p>
         The status decides the class before the body is read, so a gateway's HTML 504 is still a temporary failure and
-        not a final answer.
+        not a final answer. There is one exception: a 409 whose code says the key already holds a different request means
+        that an earlier send arrived, so it is treated as unknown and leads to "Check status".
       </p>
       <p>
         To see a final 422, submit a payout whose account number ends in <code>0000</code>: the mock bank does not
         recognise it. To see a 409, reuse a reference that already exists, for example one from the table.
       </p>
       <p>
-        Two IDs travel with a request and they do different jobs. The idempotency key names the intent: one payout, however
-        many times it is sent. The correlation ID names one operator action and all its attempts, so support can find it
-        in logs. A manual retry is a new action, so it gets a new correlation ID and keeps the key.
+        Two IDs travel with a submit and they do different jobs. The idempotency key names the intent: one payout, one batch
+        or one retry, however many times it is sent. The correlation ID names one action and all its attempts, so support can
+        find it in logs. "Retry with the same key" is a new action, so it gets a new correlation ID and keeps the key.
       </p>
     </section>
 
@@ -172,8 +181,11 @@ const browsers = counts.endToEnd.projects
           policy, and the app's policy allows neither.
         </li>
         <li>Amounts are integer minor units from the input to the request body: a bigint in code, an integer string on the wire. No float touches money.</li>
-        <li>Nothing is written to <code>localStorage</code>. Session state is in <code>sessionStorage</code> and holds only fictional data.</li>
-        <li>The mock API checks every rule again. The browser's validation is a convenience and the API's answer is the truth.</li>
+        <li>Nothing is written to <code>localStorage</code>. Session state is in <code>sessionStorage</code> and ends with the tab.</li>
+        <li>
+          The mock API checks every field rule of the payout form again, for a single payout and for each line of a batch.
+          The browser's validation is a convenience and the API's answer is the truth.
+        </li>
         <li>There is no login in this sample, so there is no session cookie and no CSRF token. With cookie sessions, state-changing requests would carry a CSRF token and cookies would be <code>SameSite</code> and <code>HttpOnly</code>.</li>
       </ul>
     </section>
@@ -184,16 +196,25 @@ const browsers = counts.endToEnd.projects
       <h3>Checked on every run</h3>
       <ul>
         <li>
-          axe-core on every page and on these states (detail panel, empty and out-of-date table, Simulate panel,
-          request log, dialog, form with errors, outcome unknown, batch result), with the rule tags <code>wcag2a</code>,
-          <code>wcag2aa</code>, <code>wcag21a</code> and <code>wcag21aa</code>, at desktop width and at 390 pixels.
+          axe-core with the rule tags <code>wcag2a</code>, <code>wcag2aa</code>, <code>wcag21a</code> and <code>wcag21aa</code>,
+          on every page at desktop width and at 390 pixels. At desktop width also on these states: detail panel; empty,
+          out-of-date and not yet loaded table; Simulate panel; request log; dialog; form with errors, accepted and outcome
+          unknown; batch outcome unknown and not received; batch result. At 390 pixels also on the detail drawer, the request
+          log, the batch result, and a payout and a batch with an unknown outcome.
         </li>
         <li>Keyboard: table rows by arrow keys, Home, End and Enter; Escape closes the detail panel and returns focus to its row; at 390 pixels every Tab stop on the home page has a visible focus indicator.</li>
-        <li>Focus: the drawer and the dialog trap focus, close on Escape and return focus to the control that opened them; a route change and a batch retry move focus to the page heading; a failed submit moves it to the error summary.</li>
+        <li>Focus: the drawer and the dialog trap focus, close on Escape and return focus to the control that opened them; a route change and a batch retry move focus to the page heading; a submit with errors moves it to the error summary; an unknown outcome moves it to the notice.</li>
         <li>Reduced motion: with the system setting on, the drawer animation is off.</li>
-        <li>Status is never colour alone: every badge is an icon, a text label and a tint, and a unit test holds each status to that.</li>
-        <li>Reflow: no sideways scroll at 390 pixels; the table still shows rows at 1024 by 768 and with the WCAG text-spacing overrides applied.</li>
-        <li>Touch targets on a phone are at least 44 pixels high.</li>
+        <li>Status is never colour alone: every badge is an icon, a text label and a tint, and a component test holds each status to that.</li>
+        <li>
+          Reflow: no sideways page scroll at 390 pixels; the table shows its Status column and needs no sideways scroll at a
+          set of widths from 320 to 1920 pixels; it still shows rows at 1024 by 768 and with the WCAG text-spacing overrides
+          applied.
+        </li>
+        <li>
+          Touch targets on a phone: every button, select, text field and menu link on the home page, in the menu, in the detail
+          drawer and on the payout form is at least 44 pixels high. Text links are smaller.
+        </li>
       </ul>
       <h3>Not checked</h3>
       <ul>
@@ -223,14 +244,17 @@ const browsers = counts.endToEnd.projects
             </tr>
             <tr>
               <td><code>pnpm test</code></td>
-              <td>Vue Test Utils component tests: MoneyInput, Field, StatusBadge, DataTable, Countdown, Drawer.</td>
+              <td>Vue Test Utils component tests: MoneyInput, Field, StatusBadge, DataTable, Countdown, Drawer, Rate.</td>
               <td class="right num" data-testid="count-component">{{ counts.component }}</td>
             </tr>
             <tr v-for="project in browsers" :key="project.name">
               <td><code>pnpm test:e2e</code></td>
               <td>
-                Playwright in {{ project.label }} against a local build<template v-if="project.smoke">: the smoke subset</template
-                ><template v-else>: every flow on this page, axe on every page, no sideways scroll at 390 pixels</template>.
+                Playwright in {{ project.label }} against a local build<template v-if="project.smoke"
+                  >: the smoke subset, which is the first visit, the happy submit, the timeout and status check, the partial
+                  batch, and axe on the table at desktop and phone width</template
+                ><template v-else>: the payout form, batches, the table, the request log, headers, storage, Storybook and the accessibility checks above</template
+                >.
               </td>
               <td class="right num" :data-testid="`count-e2e-${project.name}`">{{ project.tests }}</td>
             </tr>
@@ -248,8 +272,13 @@ const browsers = counts.endToEnd.projects
         </table>
       </div>
       <p class="muted">
-        The counts are not typed in. <code>scripts/test-counts.mjs</code> asks Vitest and Playwright to list their tests and
-        writes the numbers into the build, so this table cannot show a test the suite does not have.
+        The counts are not typed in. <code>scripts/test-counts.mjs</code> runs the Vitest suite, asks Playwright to list its
+        tests, and writes the numbers into the build, so this table cannot show a test the suite does not have. A test that
+        runs in three browsers is counted once for each.
+      </p>
+      <p class="muted">
+        Not every answer under "What the screen does with each answer" has an end-to-end test. 408, 425, 429, 500, 502, the
+        other 5xx, a dropped connection and an unreadable 2xx have unit tests only.
       </p>
     </section>
 
@@ -277,8 +306,8 @@ const browsers = counts.endToEnd.projects
         The prop is <code>status</code>, a closed union. One file maps each status to a tone, an icon and a label, so a
         consumer cannot ship a colour-only badge or invent a new meaning for purple. An optional <code>label</code> replaces
         the text for cases with counts, such as <DsStatusBadge status="partially_completed" label="9 of 12 booked" />, while
-        the tone and icon stay tied to the status. Adding a status is one line in the map and a type error everywhere a
-        switch does not handle it yet.
+        the tone and icon stay tied to the status. Adding a status is two lines in that file, its name in the union and its
+        entry in the map, and the type check fails until both are there.
       </p>
 
       <h3>3. How a breaking change would ship</h3>

@@ -40,5 +40,8 @@ sh design/build.sh
 
 ## Left alone
 
-- Between 721 and about 900 pixels wide the instruction table still scrolls sideways inside its own region. Its five columns need 697 pixels and the region is 471 to 650 pixels wide there, so hiding one more column does not fit it. Fixing it means switching the table to cards before the rest of the page switches to its phone layout, which is more than a few lines.
 - Two optional number props in Storybook (Rate `alignPlaces`, TextInput `maxlength`) still show "Set number". They have no default that would be honest to prefill.
+
+## Since then
+
+The instruction table used to scroll sideways inside its own region between 721 and about 940 pixels wide. It is now cards up to 1,000 pixels, and the detail opens in a drawer up to 1,250 pixels, so the Status column is on screen at every width from 320 to 1920 pixels.
