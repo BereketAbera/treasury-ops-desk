@@ -66,10 +66,7 @@ const state = computed(() => (expired.value ? 'expired' : seconds.value <= props
   <span class="ds-countdown" :class="`ds-countdown--${state}`" role="timer" aria-live="off" :data-state="state">
     <DsIcon :name="expired ? 'alert-triangle' : 'clock'" :size="14" />
     <template v-if="expired">{{ expiredLabel }}</template>
-    <template v-else>
-      <span v-if="label">{{ label }}</span>
-      <span class="ds-countdown__time">{{ display }}</span>
-    </template>
+    <span v-else class="ds-countdown__time">{{ label ? `${label} ` : '' }}{{ display }}</span>
   </span>
 </template>
 

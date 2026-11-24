@@ -29,19 +29,29 @@ const emit = defineEmits<{
 
 const placeholder = computed(() => (props.decimals === 0 ? '0' : `0.${'0'.repeat(props.decimals)}`))
 
+let lastProblem: ParseProblem | null | undefined
+
 function sync(value: string) {
   const parsed = parseAmount(value, props.decimals)
-  minor.value = parsed.ok ? parsed.minor.toString() : null
-  emit('problem', parsed.ok ? null : parsed.problem)
+  const next = parsed.ok ? parsed.minor.toString() : null
+  if (next !== minor.value) minor.value = next
+  const problem = parsed.ok ? null : parsed.problem
+  if (problem !== lastProblem) {
+    lastProblem = problem
+    emit('problem', problem)
+  }
 }
 
 function onInput(event: Event) {
-  text.value = (event.target as HTMLInputElement).value
-  sync(text.value)
+  // Read the element, not the model: when the parent controls the text, the model has not caught up yet.
+  const value = (event.target as HTMLInputElement).value
+  text.value = value
+  sync(value)
 }
 
-function onBlur() {
-  const parsed = parseAmount(text.value, props.decimals)
+function onBlur(event: FocusEvent) {
+  const value = (event.target as HTMLInputElement).value
+  const parsed = parseAmount(value, props.decimals)
   if (parsed.ok) text.value = formatMinor(parsed.minor, props.decimals)
 }
 
@@ -52,11 +62,7 @@ watch(
 )
 
 // Text set from outside (a prefill, a reset) still has to produce minor units.
-watch(text, (value) => {
-  const parsed = parseAmount(value, props.decimals)
-  const next = parsed.ok ? parsed.minor.toString() : null
-  if (next !== minor.value) minor.value = next
-})
+watch(text, (value) => sync(value))
 </script>
 
 <template>
