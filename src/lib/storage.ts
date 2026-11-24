@@ -29,15 +29,23 @@ export function writeSession(key: string, value: unknown): void {
   }
 }
 
-export function clearSession(prefix: string): void {
+export function dropSession(key: string): void {
   try {
-    const keys: string[] = []
-    for (let index = 0; index < sessionStorage.length; index += 1) {
-      const key = sessionStorage.key(index)
-      if (key && key.startsWith(prefix)) keys.push(key)
-    }
-    keys.forEach((key) => sessionStorage.removeItem(key))
+    sessionStorage.removeItem(key)
   } catch {
-    // Nothing to clear.
+    // Nothing to drop.
   }
+}
+
+/** The stored keys that start with a prefix. */
+export function sessionKeys(prefix: string): string[] {
+  try {
+    return Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.key(index) ?? '').filter((key) => key.startsWith(prefix))
+  } catch {
+    return []
+  }
+}
+
+export function clearSession(prefix: string): void {
+  sessionKeys(prefix).forEach(dropSession)
 }

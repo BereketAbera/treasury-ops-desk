@@ -7,7 +7,8 @@ import { usePayoutsStore } from '@/stores/payouts'
 import { usePrefsStore } from '@/stores/prefs'
 import { POLL_LIMIT, useRequestLogStore } from '@/stores/requestLog'
 import { useSimulateStore } from '@/stores/simulate'
-import { fakeFetch, samplePayout } from './helpers'
+import { useSubmitsStore } from '@/stores/submits'
+import { fakeFetch, sampleBody, samplePayout, type Reply } from './helpers'
 
 beforeEach(() => {
   sessionStorage.clear()
@@ -280,5 +281,140 @@ describe('simulate store', () => {
     expect(getScenario().id).toBe('polling-outage')
     simulate.set('normal')
     expect(simulate.isNormal).toBe(true)
+  })
+})
+
+describe('submits store', () => {
+  const draft = { reference: 'INV-30001', beneficiaryName: 'Adaeze', bank: 'Quayside', account: '0123456781', routeId: 'USDC-NGN', amount: '2450000', purposeCode: '' }
+  const retryBody = { items: [{ line: 5, itemKey: 'a' }] }
+
+  function answer(reply: Reply | ((method: string) => Reply)) {
+    const fake = fakeFetch((call) => (typeof reply === 'function' ? reply(call.method) : reply))
+    vi.stubGlobal('fetch', fake.fetch)
+    return fake.calls
+  }
+
+  /** A reload: a new store over the same storage. */
+  function reload() {
+    setActivePinia(createPinia())
+    return useSubmitsStore()
+  }
+
+  it('keeps an unresolved submit when its page is left, and drops a resolved one', async () => {
+    const submits = useSubmitsStore()
+    answer({ status: 0, drop: true })
+    const first = submits.payout()
+    first.saveDraft(draft)
+    await first.submit(sampleBody)
+    expect(first.state.value.phase).toBe('unknown')
+    submits.release(first)
+    expect(submits.payout()).toBe(first)
+
+    answer({ status: 200, body: { key: 'k', received: true, payout: samplePayout(), batch: null, retried: null } })
+    await first.checkStatus()
+    submits.release(first)
+    const second = submits.payout()
+    expect(second).not.toBe(first)
+    expect(second.state.value.phase).toBe('idle')
+    expect(second.idempotencyKey.value).not.toBe(first.idempotencyKey.value)
+    expect(second.draft()).toBeNull()
+  })
+
+  it('brings an unresolved submit back after a reload with its key, attempts, correlation ID and draft, from the moment it is sent', async () => {
+    const calls = answer({ status: 0, hang: true })
+    const submits = useSubmitsStore()
+    const first = submits.payout()
+    first.saveDraft(draft)
+    void first.submit(sampleBody)
+    const again = reload().payout()
+    expect(again.state.value).toMatchObject({ phase: 'unknown', reason: 'reload', correlationId: calls[0]?.headers['X-Correlation-Id'] })
+    expect(again.idempotencyKey.value).toBe(first.idempotencyKey.value)
+    expect(again.attempts.value).toBe(1)
+    expect(again.draft()).toEqual(draft)
+  })
+
+  it('adds a payout accepted while no page shows it', async () => {
+    answer({ status: 201, body: samplePayout() })
+    const submits = useSubmitsStore()
+    const form = submits.payout()
+    form.saveDraft(draft)
+    const pending = form.submit(sampleBody)
+    submits.release(form)
+    await pending
+    expect(usePayoutsStore().accepted.map((item) => item.id)).toEqual(['PO-48261'])
+    expect(submits.payout()).toBe(form)
+    expect(sessionStorage.getItem('qc.form.payout.v2')).toBeNull()
+  })
+
+  it('names the batch with an unresolved retry, after a reload as well, until it is resolved', async () => {
+    answer({ status: 0, drop: true })
+    const submits = useSubmitsStore()
+    const retry = submits.batchRetry('BT-301')
+    retry.holdDraft(retryBody)
+    expect(submits.unresolvedRetryOf).toBeNull()
+    await retry.submit(retryBody)
+    expect(submits.unresolvedRetryOf).toBe('BT-301')
+
+    const after = reload()
+    expect(after.unresolvedRetryOf).toBe('BT-301')
+    const restored = after.batchRetry('BT-301')
+    expect(restored.draft()).toEqual(retryBody)
+    answer({ status: 200, body: { key: 'k', received: false, payout: null, batch: null, retried: null } })
+    await restored.checkStatus()
+    expect(restored.state.value.phase).toBe('not-received')
+    expect(after.unresolvedRetryOf).toBeNull()
+  })
+
+  it('a submit its page has let go of sends nothing and changes nothing that is kept', async () => {
+    const calls = answer({ status: 0, hang: true })
+    const submits = useSubmitsStore()
+    const old = submits.batch()
+    submits.release(old)
+    const current = submits.batch()
+    current.holdDraft({ fileName: 'a.csv', rows: [] })
+    void current.submit({ items: [] })
+    const kept = sessionStorage.getItem('qc.form.batch.v1')
+    expect(kept).toContain(current.idempotencyKey.value)
+
+    old.startNew()
+    old.saveDraft({ fileName: 'late.csv', rows: [] })
+    expect(await old.submit({ items: [] })).toBe(false)
+    expect(sessionStorage.getItem('qc.form.batch.v1')).toBe(kept)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('says when a request is on its way, and forgets everything when the demo data is reset', async () => {
+    answer({ status: 0, hang: true })
+    const submits = useSubmitsStore()
+    const form = submits.batch()
+    form.holdDraft({ fileName: 'a.csv', rows: [] })
+    void form.submit({ items: [] })
+    expect(submits.busy).toBe(true)
+    submits.clear()
+    expect(submits.busy).toBe(false)
+    expect(Object.keys(sessionStorage).filter((key) => key.startsWith('qc.form.'))).toEqual([])
+    expect(submits.batch()).not.toBe(form)
+  })
+
+  it('drops a stored submit with the wrong shape', () => {
+    const good = { idempotencyKey: 'k', sent: true, attempts: 1 }
+    const broken: [string, unknown][] = [
+      ['qc.form.payout.v2', { draft: {} }],
+      ['qc.form.payout.v2', { ...good, draft: { ...draft, quote: { id: 7 } } }],
+      ['qc.form.payout.v2', { ...good, attempts: -1, draft }],
+      ['qc.form.batch.v1', { ...good, draft: { fileName: 'x', rows: [{}] } }],
+      ['qc.form.batch.v1', { ...good, draft: { fileName: 'x', rows: [{ line: 2, draft, problems: [], item: { line: 2 } }] } }],
+      ['qc.form.batch-retry.BT-301', []],
+    ]
+    for (const [key, value] of broken) {
+      sessionStorage.clear()
+      sessionStorage.setItem(key, JSON.stringify(value))
+      const submits = reload()
+      for (const submit of [submits.payout(), submits.batch(), submits.batchRetry('BT-301')]) expect(submit.state.value.phase, `${key} ${JSON.stringify(value)}`).toBe('idle')
+    }
+    // A submit saved before the rate was kept with it is still restored.
+    sessionStorage.clear()
+    sessionStorage.setItem('qc.form.payout.v2', JSON.stringify({ ...good, draft }))
+    expect(reload().payout().state.value.phase).toBe('unknown')
   })
 })

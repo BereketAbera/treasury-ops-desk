@@ -1,6 +1,7 @@
 import { newUuid } from './ids'
+import { isRecord } from './storage'
 import type { BatchItemInput } from './types'
-import { validateDraft, type PayoutDraft } from './validation'
+import { FIELD_ORDER, validateDraft, type PayoutDraft } from './validation'
 
 export const BATCH_COLUMNS = ['reference', 'beneficiary', 'bank', 'account', 'route', 'amount', 'purpose'] as const
 export const BATCH_LIMIT = 1000
@@ -12,6 +13,31 @@ export interface BatchRow {
   problems: string[]
   /** Present when the row is valid. */
   item: BatchItemInput | null
+}
+
+function isBatchItemInput(value: unknown): value is BatchItemInput {
+  return (
+    isRecord(value) &&
+    typeof value.line === 'number' &&
+    ['itemKey', 'reference', 'routeId', 'targetAmountMinor'].every((field) => typeof value[field] === 'string') &&
+    /^\d+$/.test(String(value.targetAmountMinor)) &&
+    (value.purposeCode === null || typeof value.purposeCode === 'string') &&
+    isRecord(value.beneficiary) &&
+    ['name', 'bank', 'account'].every((field) => typeof (value.beneficiary as Record<string, unknown>)[field] === 'string')
+  )
+}
+
+/** For rows read back from storage. */
+export function isBatchRow(value: unknown): value is BatchRow {
+  if (!isRecord(value) || !isRecord(value.draft)) return false
+  const draft = value.draft
+  return (
+    typeof value.line === 'number' &&
+    FIELD_ORDER.every((field) => typeof draft[field] === 'string') &&
+    Array.isArray(value.problems) &&
+    value.problems.every((problem) => typeof problem === 'string') &&
+    (value.item === null || isBatchItemInput(value.item))
+  )
 }
 
 export type BatchParse = { ok: true; rows: BatchRow[] } | { ok: false; problem: string }

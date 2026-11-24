@@ -1,55 +1,97 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import BatchArrival from '@/components/BatchArrival.vue'
+import SubmissionStatus from '@/components/SubmissionStatus.vue'
 import { DsAmount, DsBanner, DsButton, DsCopyButton, DsIcon, DsStatusBadge } from '@/ds'
 import { decimalsOf } from '@/lib/currencies'
-import { failureOf, sendWithRetry } from '@/lib/api'
 import { parseBatchCsv, type BatchRow } from '@/lib/batchCsv'
 import { formatDateTime, plural } from '@/lib/format'
 import { api } from '@/lib/http'
-import { newCorrelationId, newIdempotencyKey } from '@/lib/ids'
-import { SUBMIT_POLICY } from '@/lib/retry'
 import { findRoute, routeLabel } from '@/lib/routes'
+import { progressText, type AcceptedHow } from '@/lib/submission'
 import { batchBadge, type Batch } from '@/lib/types'
 import { useSimulateStore } from '@/stores/simulate'
+import { useSubmitsStore } from '@/stores/submits'
 
 const route = useRoute()
 const router = useRouter()
 const simulate = useSimulateStore()
+const submits = useSubmitsStore()
+
+// The submit belongs to the store, not to this page: leaving, reloading or asking for a new batch finds
+// the same one, with the same key, until its outcome is known.
+const submission = submits.batch()
+const state = submission.state
+const askedForNewBatch = ref(false)
+const showUnresolvedNotice = computed(() => askedForNewBatch.value && ['unknown', 'checking'].includes(state.value.phase))
 
 const fileInput = ref<HTMLInputElement | null>(null)
+const statusRegion = ref<{ focus: () => void } | null>(null)
 const dragging = ref(false)
-const fileName = ref('')
-const rows = ref<BatchRow[]>([])
+const fileName = ref(submission.draft()?.fileName ?? '')
+const rows = ref<BatchRow[]>(submission.draft()?.rows ?? [])
 const fileProblem = ref('')
-const idempotencyKey = ref(newIdempotencyKey())
-const sending = ref(false)
-const attemptText = ref('')
-const failure = ref<{ kind: 'retryable' | 'final' | 'unknown'; message: string; correlationId: string } | null>(null)
 const recent = ref<Batch[]>([])
 
 const valid = computed(() => rows.value.filter((row) => row.item !== null))
 const invalid = computed(() => rows.value.filter((row) => row.item === null))
 
-function load(text: string, name: string) {
-  const parsed = parseBatchCsv(text)
-  fileName.value = name
-  failure.value = null
-  // A new file is a new intent, so it gets a new batch key.
-  idempotencyKey.value = newIdempotencyKey()
-  if (parsed.ok) {
-    rows.value = parsed.rows
-    fileProblem.value = ''
-  } else {
-    rows.value = []
-    fileProblem.value = parsed.problem
+/** No file can be chosen and nothing can be submitted: a submit, or a retry of an earlier batch, has no known outcome. */
+const locked = computed(() => submission.locked.value || submits.unresolvedRetryOf !== null)
+const progress = computed(() => (state.value.phase === 'sending' || state.value.phase === 'backoff' ? progressText(state.value) : ''))
+
+// The region at the top opens when there is something to decide. While a first send is on its way, the line
+// beside Submit says so, and the page does not move.
+const statusOpen = ref(state.value.phase !== 'idle')
+/** A batch accepted while another page was open. */
+const arrived = ref<{ batch: Batch; how: AcceptedHow } | null>(null)
+
+async function onPhase() {
+  const current = state.value
+  if (current.phase === 'accepted') {
+    startNew()
+    await router.push({ path: `/batches/${current.result.id}`, state: { arrival: current.how } })
+    return
   }
+  if (current.phase === 'idle') statusOpen.value = false
+  if (['retryable', 'final', 'unknown', 'checking', 'not-received'].includes(current.phase)) {
+    statusOpen.value = true
+    await nextTick()
+    if (current.phase !== 'checking') statusRegion.value?.focus()
+  }
+  if (current.phase === 'unknown') await loadRecent()
+}
+
+if (state.value.phase === 'accepted') {
+  arrived.value = { batch: state.value.result, how: state.value.how }
+  startNew()
+  statusOpen.value = false
+}
+watch(() => state.value.phase, onPhase)
+onBeforeUnmount(() => submits.release(submission))
+
+function startNew() {
+  submission.startNew()
+  fileName.value = ''
+  rows.value = []
+  fileProblem.value = ''
+}
+
+function load(text: string, name: string) {
+  if (locked.value) return
+  const parsed = parseBatchCsv(text)
+  // A new file is a new intent, so it gets a new batch key.
+  startNew()
+  fileName.value = name
+  if (parsed.ok) rows.value = parsed.rows
+  else fileProblem.value = parsed.problem
 }
 
 async function readFile(file: File | undefined) {
-  if (!file) return
+  if (!file || locked.value) return
   if (file.size > 500_000) {
-    rows.value = []
+    startNew()
     fileName.value = file.name
     fileProblem.value = 'The file is larger than 500 KB. Split it into smaller batches.'
     return
@@ -77,6 +119,7 @@ function runTag(): string {
 }
 
 async function loadSample() {
+  if (locked.value) return
   const response = await fetch('/sample-batch.csv')
   if (!response.ok) {
     fileProblem.value = 'The sample file could not be loaded.'
@@ -90,46 +133,17 @@ async function loadSample() {
 }
 
 function removeInvalid() {
-  rows.value = valid.value
+  if (!locked.value) rows.value = valid.value
+}
+
+function body() {
+  return { items: rows.value.flatMap((row) => (row.item ? [row.item] : [])) }
 }
 
 async function submit() {
-  if (sending.value || valid.value.length === 0 || invalid.value.length > 0) return
-  sending.value = true
-  failure.value = null
-  const correlationId = newCorrelationId()
-  const { result } = await sendWithRetry<Batch>(
-    api,
-    {
-      method: 'POST',
-      path: '/api/batches',
-      body: { items: valid.value.map((row) => row.item) },
-      idempotencyKey: idempotencyKey.value,
-      correlationId,
-    },
-    SUBMIT_POLICY,
-    {
-      onAttempt: (attempt) => (attemptText.value = `Sending, attempt ${attempt}.`),
-      onBackoff: (info) =>
-        (attemptText.value = `Attempt ${info.failedAttempt} failed with status ${info.status}. Attempt ${info.nextAttempt} goes out in ${(info.delayMs / 1000).toFixed(1)} seconds.`),
-    },
-  )
-  sending.value = false
-  attemptText.value = ''
-  if (result.kind === 'ok') {
-    await router.push(`/batches/${result.data.id}`)
-    return
-  }
-  const kind = failureOf(result) ?? 'unknown'
-  failure.value = {
-    kind,
-    correlationId,
-    message:
-      result.kind === 'error'
-        ? `${result.error.message} (${result.status})`
-        : 'No answer arrived. The batch may or may not have been received.',
-  }
-  if (kind === 'unknown') await loadRecent()
+  if (locked.value || valid.value.length === 0 || invalid.value.length > 0) return
+  submission.holdDraft({ fileName: fileName.value, rows: rows.value })
+  await submission.submit(body())
 }
 
 async function loadRecent() {
@@ -147,7 +161,9 @@ onMounted(async () => {
     const query = { ...route.query }
     delete query.sample
     await router.replace({ query })
-    await loadSample()
+    // A new sample is a new batch. While an earlier one is unresolved, that one is shown instead.
+    if (locked.value) askedForNewBatch.value = true
+    else await loadSample()
   }
   await loadRecent()
 })
@@ -164,6 +180,33 @@ onMounted(async () => {
       <p><RouterLink to="/batches">All batches</RouterLink></p>
     </header>
 
+    <DsBanner v-if="showUnresolvedNotice" tone="unknown" title="One submit is still unresolved. Check its status first." announce="status" data-testid="unresolved-notice">
+      <p>
+        A new batch was asked for, but the earlier submit below has no known outcome. It is kept here, with its idempotency
+        key, until its status is checked. Nothing was discarded and nothing was sent again.
+      </p>
+    </DsBanner>
+
+    <SubmissionStatus
+      v-if="statusOpen"
+      ref="statusRegion"
+      :state="state"
+      what="batch"
+      @retry="submission.retry(body())"
+      @check="submission.checkStatus()"
+      @resend="submission.retry(body())"
+    />
+
+    <DsBanner v-if="submits.unresolvedRetryOf" tone="unknown" title="A retry is still unresolved. Check its status first." announce="status" data-testid="unresolved-retry">
+      <p>
+        The retry of rejected lines in batch
+        <RouterLink class="mono" :to="`/batches/${submits.unresolvedRetryOf}`">{{ submits.unresolvedRetryOf }}</RouterLink> has no known outcome. Open that
+        batch and check the status of its retry. A new batch can be sent after that.
+      </p>
+    </DsBanner>
+
+    <BatchArrival v-if="arrived" :how="arrived.how" :batch-id="arrived.batch.id" link />
+
     <DsBanner v-if="!simulate.isNormal" tone="warning" :title="`Simulate is set to: ${simulate.scenario.label}`" data-testid="simulate-banner">
       <p>{{ simulate.scenario.watch }}</p>
     </DsBanner>
@@ -172,7 +215,7 @@ onMounted(async () => {
       <h2 id="batch-file-heading">1. Choose a file</h2>
       <div
         class="batch__drop"
-        :class="{ 'batch__drop--over': dragging }"
+        :class="{ 'batch__drop--over': dragging && !locked }"
         data-testid="batch-drop"
         @dragenter.prevent="dragging = true"
         @dragover.prevent="dragging = true"
@@ -182,15 +225,15 @@ onMounted(async () => {
         <p id="batch-file-label" class="batch__label">Batch file (CSV)</p>
         <p id="batch-file-hint" class="muted">Columns: reference, beneficiary, bank, account, route, amount, purpose. Up to 1,000 lines.</p>
         <div class="batch__pick">
-          <DsButton icon="upload" aria-describedby="batch-file-label batch-file-hint" data-testid="choose-file" @click="fileInput?.click()">Choose a CSV file</DsButton>
+          <DsButton icon="upload" :disabled="locked" aria-describedby="batch-file-label batch-file-hint" data-testid="choose-file" @click="fileInput?.click()">Choose a CSV file</DsButton>
           <span class="batch__file-name" data-testid="file-name">{{ fileName || 'No file chosen' }}</span>
-          <span class="muted batch__drop-hint">or drop a file here</span>
+          <span v-if="!locked" class="muted batch__drop-hint">or drop a file here</span>
         </div>
         <!-- The native control is hidden and kept out of the tab order. The button above opens it. -->
-        <input ref="fileInput" id="batch-file" hidden type="file" accept=".csv,text/csv" aria-label="Batch file (CSV)" @change="onFile" />
+        <input ref="fileInput" id="batch-file" hidden type="file" accept=".csv,text/csv" aria-label="Batch file (CSV)" :disabled="locked" @change="onFile" />
       </div>
       <div class="batch__actions">
-        <DsButton data-testid="load-sample" @click="loadSample">Load the sample batch (12 lines)</DsButton>
+        <DsButton :disabled="locked" data-testid="load-sample" @click="loadSample">Load the sample batch (12 lines)</DsButton>
         <a href="/sample-batch.csv" download>Download the sample file</a>
       </div>
       <DsBanner v-if="fileProblem" tone="danger" title="This file cannot be used" announce="alert">
@@ -239,37 +282,25 @@ onMounted(async () => {
       </div>
 
       <div class="batch__actions">
-        <DsButton variant="primary" :loading="sending" :disabled="invalid.length > 0 || valid.length === 0" data-testid="submit-batch" @click="submit">
+        <DsButton
+          variant="primary"
+          :loading="submission.busy.value"
+          :disabled="invalid.length > 0 || valid.length === 0 || (locked && !submission.busy.value)"
+          data-testid="submit-batch"
+          @click="submit"
+        >
           Submit batch of {{ valid.length }}
         </DsButton>
         <DsButton v-if="invalid.length > 0" @click="removeInvalid">Remove the {{ plural(invalid.length, 'line') }} with problems</DsButton>
         <p v-if="invalid.length > 0" class="muted">A batch is only sent when every line is valid.</p>
         <p v-else class="muted batch__key">
-          Batch idempotency key <span class="mono">{{ idempotencyKey }}</span>
-          <DsCopyButton :value="idempotencyKey" label="Copy idempotency key" />
+          Batch idempotency key <span class="mono" data-testid="idempotency-key">{{ submission.idempotencyKey.value }}</span>
+          <DsCopyButton :value="submission.idempotencyKey.value" label="Copy idempotency key" />
         </p>
       </div>
-      <p class="ds-visually-hidden" role="status">{{ attemptText }}</p>
-      <p v-if="attemptText" class="muted" aria-hidden="true">{{ attemptText }}</p>
-
-      <DsBanner
-        v-if="failure"
-        :tone="failure.kind === 'final' ? 'danger' : failure.kind === 'unknown' ? 'unknown' : 'warning'"
-        :title="failure.kind === 'unknown' ? 'We could not confirm this batch' : 'The batch was not accepted'"
-        announce="alert"
-      >
-        <p>{{ failure.message }}</p>
-        <p v-if="failure.kind === 'unknown'">
-          Do not upload the file again: a new upload gets a new key. Look for the batch under Recent batches below. Submitting
-          again from this page is safe, because it reuses the same key and the API returns the first result.
-        </p>
-        <p v-else-if="failure.kind === 'retryable'">Nothing was booked. Submitting again reuses the same idempotency key.</p>
-        <p v-else>Sending the same batch again will not help.</p>
-        <p class="batch__key">
-          Correlation ID <span class="mono">{{ failure.correlationId }}</span>
-          <DsCopyButton :value="failure.correlationId" label="Copy correlation ID" />
-        </p>
-      </DsBanner>
+      <p v-if="locked && !submission.busy.value" class="muted">Locked until this submit is resolved.</p>
+      <p v-if="!statusOpen" class="ds-visually-hidden" role="status">{{ progress }}</p>
+      <p v-if="progress" class="muted" aria-hidden="true">{{ progress }}</p>
     </section>
 
     <section v-if="recent.length > 0" class="card batch__step" aria-labelledby="batch-recent-heading">

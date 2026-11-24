@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import SubmissionStatus from '@/components/SubmissionStatus.vue'
 import { DsAmount, DsBanner, DsButton, DsCopyButton, DsStatusBadge, formatDecimal, statusLabel } from '@/ds'
 import { decimalsOf } from '@/lib/currencies'
 import { formatDateTime, ratePlaces } from '@/lib/format'
@@ -8,50 +9,70 @@ import { newCorrelationId } from '@/lib/ids'
 import { findRoute, routeLabel } from '@/lib/routes'
 import type { Payout } from '@/lib/types'
 import { usePayoutsStore, type PayoutRow } from '@/stores/payouts'
+import { useSubmitsStore } from '@/stores/submits'
 
+// Shows one payout. The page gives it a key, so another payout is another instance.
 const props = defineProps<{ payout: PayoutRow }>()
 
 const store = usePayoutsStore()
-const busy = ref<'check' | 'retry' | null>(null)
+const submits = useSubmitsStore()
+const checking = ref(false)
 const notice = ref<{ tone: 'success' | 'danger'; text: string; correlationId?: string } | null>(null)
 
-watch(
-  () => props.payout.id,
-  () => {
-    notice.value = null
-    busy.value = null
-  },
-)
+// A retry is a submit like any other: one key, kept by the store until its outcome is known.
+const retry = submits.payoutRetry(props.payout.id)
+const retryState = retry.state
+const statusRegion = ref<{ focus: () => void } | null>(null)
+onBeforeUnmount(() => submits.release(retry))
 
 const route = computed(() => findRoute(props.payout.routeId))
 const rateText = computed(() => formatDecimal(props.payout.rate, ratePlaces(route.value?.rate)))
-const canRetry = computed(() => props.payout.status === 'failed' && props.payout.failure?.retryable === true)
+const canRetry = computed(() => props.payout.status === 'failed' && props.payout.failure?.retryable === true && (!retry.locked.value || retry.busy.value))
 
-async function act(kind: 'check' | 'retry') {
-  if (busy.value) return
-  busy.value = kind
+async function checkPayout() {
+  if (checking.value) return
+  checking.value = true
   notice.value = null
   const correlationId = newCorrelationId()
-  const path = `/api/payouts/${props.payout.id}/${kind === 'check' ? 'status-check' : 'retry'}`
-  const result = await api.request<Payout>({ method: 'POST', path, correlationId })
-  busy.value = null
+  const result = await api.request<Payout>({ method: 'POST', path: `/api/payouts/${props.payout.id}/status-check`, correlationId })
+  checking.value = false
   if (result.kind === 'ok') {
     store.replace(result.data)
-    notice.value =
-      kind === 'check'
-        ? { tone: 'success', text: `Status confirmed: ${statusLabel(result.data.status).toLowerCase()}. The payment was made once.` }
-        : { tone: 'success', text: 'Retry accepted. The payout is processing again.' }
+    notice.value = { tone: 'success', text: `Status confirmed: ${statusLabel(result.data.status).toLowerCase()}. The payment was made once.` }
   } else {
     notice.value = {
       tone: 'danger',
-      text:
-        result.kind === 'error'
-          ? `${result.error.message} (${result.status})`
-          : 'No answer from the API. Nothing has changed on this payout. Try the action again.',
+      text: result.kind === 'error' ? `${result.error.message} (${result.status})` : 'The status check did not get an answer. Try the check again.',
       correlationId,
     }
   }
 }
+
+async function retryPayout() {
+  notice.value = null
+  retry.holdDraft({})
+  await retry.submit({})
+}
+
+async function onRetryPhase() {
+  const current = retryState.value
+  if (current.phase === 'accepted') {
+    const lead = { answer: 'Retry accepted.', replay: 'Already received, not sent twice.', 'status-check': 'The status check found this retry: it was received.' }[current.how]
+    const now = current.result.status
+    notice.value = { tone: 'success', text: `${lead} The payout is ${now === 'processing' ? 'processing again' : `now ${statusLabel(now).toLowerCase()}`}.` }
+    retry.startNew()
+  } else if (current.phase === 'final') {
+    notice.value = { tone: 'danger', text: `${current.message} (${current.status})`, correlationId: current.correlationId }
+    retry.startNew()
+  } else if (['retryable', 'unknown', 'not-received'].includes(current.phase)) {
+    await nextTick()
+    statusRegion.value?.focus()
+  }
+}
+
+watch(() => retryState.value.phase, onRetryPhase)
+// The retry ended while another payout or page was open.
+if (retryState.value.phase === 'accepted' || retryState.value.phase === 'final') void onRetryPhase()
 </script>
 
 <template>
@@ -68,20 +89,30 @@ async function act(kind: 'check' | 'retry') {
     <DsBanner v-if="payout.status === 'outcome_unknown'" tone="unknown" title="We could not confirm this payout">
       <p>Do not resend. Check status first: a resend could pay the beneficiary twice.</p>
       <template #actions>
-        <DsButton variant="primary" :loading="busy === 'check'" @click="act('check')">Check status</DsButton>
+        <DsButton variant="primary" :loading="checking" @click="checkPayout">Check status</DsButton>
       </template>
     </DsBanner>
 
     <DsBanner v-if="payout.failure" tone="danger" :title="payout.failure.message">
       <p>
         Code <code>{{ payout.failure.code }}</code
-        >. {{ payout.failure.nextStep }}
+        >. <template v-if="!retry.unresolved.value">{{ payout.failure.nextStep }}</template>
       </p>
       <p v-if="!payout.failure.retryable" class="muted">Retrying the same instruction will not help.</p>
       <template v-if="canRetry" #actions>
-        <DsButton variant="primary" :loading="busy === 'retry'" @click="act('retry')">Retry payout</DsButton>
+        <DsButton variant="primary" :loading="retry.busy.value" @click="retryPayout">Retry payout</DsButton>
       </template>
     </DsBanner>
+
+    <SubmissionStatus
+      v-if="retryState.phase !== 'idle' && retryState.phase !== 'accepted'"
+      ref="statusRegion"
+      :state="retryState"
+      what="retry"
+      @retry="retry.retry({})"
+      @check="retry.checkStatus()"
+      @resend="retry.retry({})"
+    />
 
     <DsBanner v-if="notice" :tone="notice.tone" announce="status">
       <p>{{ notice.text }}</p>

@@ -1,69 +1,33 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PayoutRateSection from '@/components/payout/PayoutRateSection.vue'
 import PayoutSubmissionStatus from '@/components/payout/PayoutSubmissionStatus.vue'
 import { DsBanner, DsButton, DsCopyButton, DsField, DsMoneyInput, DsSelect, DsTextInput, formatMinor } from '@/ds'
-import { withDuplicateSubmit } from '@/demo'
 import { decimalsOf } from '@/lib/currencies'
 import { api } from '@/lib/http'
 import { newCorrelationId } from '@/lib/ids'
 import { findRoute, PURPOSE_CODES, routeLabel, ROUTES } from '@/lib/routes'
-import { isRecord, readSession, writeSession } from '@/lib/storage'
-import { createSubmission } from '@/lib/submission'
 import type { CreatePayoutBody, Quote } from '@/lib/types'
 import { emptyDraft, FIELD_ORDER, validateAmount, validateDraft, type DraftField, type PayoutDraft } from '@/lib/validation'
-import { usePayoutsStore } from '@/stores/payouts'
 import { useSimulateStore } from '@/stores/simulate'
-
-const FORM_KEY = 'qc.form.payout.v2'
-
-interface SavedForm {
-  idempotencyKey: string
-  draft: PayoutDraft
-  /** A request with this key went out and its outcome is not known yet. */
-  sent: boolean
-  /** Attempts sent with this key so far. */
-  attempts: number
-}
-
-/** What is in storage may be from an older build or edited by hand. Anything off and the form starts empty. */
-function isSavedForm(value: unknown): value is SavedForm | null {
-  if (value === null) return true
-  if (!isRecord(value) || !isRecord(value.draft)) return false
-  const fields = value.draft
-  return (
-    typeof value.idempotencyKey === 'string' &&
-    value.idempotencyKey.length > 0 &&
-    typeof value.sent === 'boolean' &&
-    typeof value.attempts === 'number' &&
-    Number.isInteger(value.attempts) &&
-    value.attempts >= 0 &&
-    FIELD_ORDER.every((field) => typeof fields[field] === 'string')
-  )
-}
+import { useSubmitsStore } from '@/stores/submits'
 
 const route = useRoute()
 const router = useRouter()
-const payouts = usePayoutsStore()
 const simulate = useSimulateStore()
+const submits = useSubmitsStore()
 
+// The submit belongs to the store, not to this page, so leaving the form never loses one. A submit
+// with no known outcome is never dropped: a link that asks for a new, prefilled form gets the
+// unresolved one instead, with a notice, until its status has been checked.
 const wantsPrefill = route.query.prefill === '1'
-const stored = readSession<SavedForm | null>(FORM_KEY, null, isSavedForm)
-// A submit with no known outcome is never dropped. A link that asks for a new, prefilled form gets
-// the unresolved one instead, with a notice, until its status has been checked.
-const unresolved = stored?.sent === true ? stored : null
-const saved = unresolved ?? (wantsPrefill ? null : stored)
-const askedForNewForm = unresolved !== null && wantsPrefill
+const submission = submits.payout()
+const askedForNewForm = wantsPrefill && submission.unresolved.value
+if (wantsPrefill && !askedForNewForm) submission.startNew()
+const { quote: savedQuote = null, ...savedFields } = submission.draft() ?? {}
 
-const draft = reactive<PayoutDraft>({ ...emptyDraft(), ...saved?.draft })
-const submission = createSubmission({
-  // withDuplicateSubmit is demo only: it sends an accepted submit twice while that scenario is armed.
-  client: withDuplicateSubmit(api),
-  idempotencyKey: saved?.idempotencyKey,
-  mayHaveBeenSent: saved?.sent === true,
-  attempts: saved?.attempts,
-})
+const draft = reactive<PayoutDraft>({ ...emptyDraft(), ...savedFields })
 const state = submission.state
 const showUnresolvedNotice = computed(() => askedForNewForm && ['unknown', 'checking'].includes(state.value.phase))
 
@@ -73,8 +37,9 @@ const serverErrors = ref<Partial<Record<DraftField, string>>>({})
 const summary = ref<HTMLElement | null>(null)
 const statusRegion = ref<{ focus: () => void } | null>(null)
 
-const quote = ref<Quote | null>(null)
-const quoteState = ref<'none' | 'loading' | 'active' | 'expired' | 'failed'>('none')
+// While a submit is unresolved, the form shows the rate that submit used, after a reload as well.
+const quote = ref<Quote | null>(submission.locked.value ? savedQuote : null)
+const quoteState = ref<'none' | 'loading' | 'active' | 'expired' | 'failed'>(quote.value ? 'active' : 'none')
 const quoteError = ref<{ message: string; correlationId: string } | null>(null)
 const rateMissing = ref(false)
 
@@ -162,46 +127,35 @@ watch(
   () => ({ ...draft }),
   (next, previous) => {
     for (const field of FIELD_ORDER) if (next[field] !== previous[field]) clearServerError(field)
-    persist()
+    saveDraft()
   },
 )
 
-function persist(sent?: boolean) {
-  const phase = state.value.phase
-  if (phase === 'accepted') return
-  writeSession(FORM_KEY, {
-    idempotencyKey: submission.idempotencyKey.value,
-    draft: { ...draft },
-    sent: sent ?? ['sending', 'backoff', 'unknown', 'checking', 'retryable'].includes(phase),
-    attempts: submission.attempts.value,
-  } satisfies SavedForm)
+function saveDraft() {
+  submission.saveDraft({ ...draft, quote: quote.value })
 }
 
-watch(
-  () => state.value.phase,
-  async (phase) => {
-    if (phase === 'accepted' && state.value.phase === 'accepted') {
-      payouts.addAccepted(state.value.payout)
-      writeSession(FORM_KEY, null)
-    } else {
-      persist()
+async function onPhase() {
+  const current = state.value
+  if (current.phase === 'final') {
+    const mapped: Partial<Record<DraftField, string>> = {}
+    for (const field of FIELD_ORDER) if (current.fields[field]) mapped[field] = current.fields[field]
+    serverErrors.value = mapped
+    if (current.code === 'quote_expired' || current.code === 'quote_mismatch') {
+      quote.value = null
+      quoteState.value = 'expired'
     }
-    if (phase === 'final' && state.value.phase === 'final') {
-      const fields = state.value.fields
-      const mapped: Partial<Record<DraftField, string>> = {}
-      for (const field of FIELD_ORDER) if (fields[field]) mapped[field] = fields[field]
-      serverErrors.value = mapped
-      if (state.value.code === 'quote_expired' || state.value.code === 'quote_mismatch') {
-        quote.value = null
-        quoteState.value = 'expired'
-      }
-    }
-    if (['accepted', 'retryable', 'final', 'unknown', 'not-received'].includes(phase)) {
-      await nextTick()
-      statusRegion.value?.focus()
-    }
-  },
-)
+  }
+  if (['accepted', 'retryable', 'final', 'unknown', 'not-received'].includes(current.phase)) {
+    await nextTick()
+    statusRegion.value?.focus()
+  }
+}
+
+watch(() => state.value.phase, onPhase)
+// The submit ended while another page was open.
+if (state.value.phase === 'final') void onPhase()
+onBeforeUnmount(() => submits.release(submission))
 
 async function getRate() {
   touch('routeId')
@@ -262,22 +216,24 @@ async function onSubmit() {
   }
   const body = buildBody()
   if (!body) return
+  saveDraft()
   await submission.submit(body)
 }
 
 async function resend() {
   // The rate may have lapsed while the outcome was unknown. The resend needs a live one.
-  if (quoteState.value !== 'active') await getRate()
+  if (quoteState.value !== 'active' || !quote.value || quote.value.expiresAt <= Date.now()) await getRate()
   const body = buildBody()
-  if (body) await submission.retry(body)
+  if (!body) return
+  saveDraft()
+  await submission.retry(body)
 }
 
 function focusField(id: string) {
   document.getElementById(id)?.focus()
 }
 
-function startNew() {
-  submission.reset()
+async function startNew() {
   Object.assign(draft, emptyDraft())
   for (const field of FIELD_ORDER) touched[field] = false
   attempted.value = false
@@ -285,8 +241,11 @@ function startNew() {
   serverErrors.value = {}
   quote.value = null
   quoteState.value = 'none'
-  writeSession(FORM_KEY, null)
-  void nextTick(() => focusField(FIELD_IDS.reference))
+  await nextTick()
+  // After the watcher above has seen the empty fields, so nothing of the old form is kept.
+  submission.startNew()
+  await nextTick()
+  focusField(FIELD_IDS.reference)
 }
 
 async function prefill() {
@@ -308,18 +267,8 @@ onMounted(async () => {
     const query = { ...route.query }
     delete query.prefill
     await router.replace({ query })
-    if (!unresolved) await prefill()
+    if (!askedForNewForm) await prefill()
   }
-})
-
-const sendingText = computed(() => {
-  const current = state.value
-  if (current.phase === 'sending') return `Sending, attempt ${current.attempt}.`
-  if (current.phase === 'backoff') {
-    return `Attempt ${current.failedAttempt} failed with status ${current.status}. Attempt ${current.nextAttempt} goes out in ${(current.delayMs / 1000).toFixed(1)} seconds.`
-  }
-  if (current.phase === 'checking') return 'Checking status by idempotency key.'
-  return ''
 })
 </script>
 
@@ -429,7 +378,7 @@ const sendingText = computed(() => {
           :quote-state="quoteState"
           :quote-error="quoteError"
           :locked="formLocked"
-          :accepted="state.phase === 'accepted' ? state.payout : null"
+          :accepted="state.phase === 'accepted' ? state.result : null"
           @get-rate="getRate"
           @expired="onRateExpired"
         />
@@ -451,7 +400,6 @@ const sendingText = computed(() => {
         <PayoutSubmissionStatus
           ref="statusRegion"
           :state="state"
-          :sending-text="sendingText"
           @retry="submission.retry()"
           @check="submission.checkStatus()"
           @resend="resend"
@@ -471,7 +419,7 @@ const sendingText = computed(() => {
           </dl>
           <p class="muted">
             The key was made when this form opened. Every attempt to send this payout carries it, and the API returns the
-            first result for a repeated key.
+            first accepted result for a repeated key.
           </p>
         </div>
       </aside>
@@ -584,12 +532,6 @@ const sendingText = computed(() => {
     gap: var(--space-4);
   }
 
-  &__status:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 3px;
-    border-radius: var(--radius-md);
-  }
-
   &__request {
     display: grid;
     gap: var(--space-2);
@@ -627,9 +569,13 @@ const sendingText = computed(() => {
   }
 
   &__rate-used {
-    color: var(--color-success-text);
+    color: var(--color-neutral-text);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-bold);
+
+    &--accepted {
+      color: var(--color-success-text);
+    }
   }
 }
 

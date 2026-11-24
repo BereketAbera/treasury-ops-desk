@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { armScenarioFromQuery, getScenario, setScenario, withDuplicateSubmit } from '@/demo'
 import { createApiClient } from '@/lib/api'
-import { createSubmission } from '@/lib/submission'
+import { createSubmission, PAYOUT_TARGET } from '@/lib/submission'
 import { DB_STORAGE_KEY, isDbState, resetDb } from '@/mocks/db'
 import { loadScenario } from '@/mocks/scenario'
 import { fakeFetch, sampleBody, samplePayout } from './helpers'
@@ -27,12 +27,12 @@ describe('demo boundary: the Simulate control', () => {
     ])
     setScenario('duplicate')
     const client = withDuplicateSubmit(createApiClient({ fetch: fake.fetch }))
-    const submission = createSubmission({ client, sleep: async () => {} })
+    const submission = createSubmission({ client, target: PAYOUT_TARGET, sleep: async () => {} })
     await submission.submit(sampleBody)
     expect(fake.calls).toHaveLength(2)
     expect(fake.calls[1]?.headers['Idempotency-Key']).toBe(fake.calls[0]?.headers['Idempotency-Key'])
     expect(fake.calls.map((call) => call.headers['X-Attempt'])).toEqual(['1', '2'])
-    expect(submission.state.value).toMatchObject({ phase: 'accepted', how: 'replay', payout: { id: 'PO-48261' }, attempts: 2 })
+    expect(submission.state.value).toMatchObject({ phase: 'accepted', how: 'replay', result: { id: 'PO-48261' }, attempts: 2 })
     expect(submission.attempts.value).toBe(2)
     expect(getScenario().id).toBe('normal')
 

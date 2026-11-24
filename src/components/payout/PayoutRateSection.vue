@@ -6,13 +6,14 @@ import { ratePlaces } from '@/lib/format'
 import { findRoute } from '@/lib/routes'
 import type { Payout, Quote } from '@/lib/types'
 
-// The rate box of the payout form: the held rate with its countdown, or the rate a payout was accepted at.
+// The rate box of the payout form: the held rate with its countdown, or, once a submit has gone out
+// with it, the rate that submit used. A countdown runs only while the rate can still be used.
 
 const props = defineProps<{
   quote: Quote | null
   quoteState: 'none' | 'loading' | 'active' | 'expired' | 'failed'
   quoteError: { message: string; correlationId: string } | null
-  /** The form is locked: no new rate can be asked for. */
+  /** A submit went out and the form is locked: no new rate can be asked for, and the countdown stops. */
   locked: boolean
   /** Set once the payout is accepted. The countdown gives way to the rate that was used. */
   accepted: Payout | null
@@ -26,7 +27,7 @@ const emit = defineEmits<{
 
 const shown = computed(() => {
   if (props.accepted) return props.accepted
-  return props.quote && props.quoteState === 'active' ? props.quote : null
+  return props.quote && (props.locked || props.quoteState === 'active') ? props.quote : null
 })
 
 const rateText = computed(() => {
@@ -41,9 +42,10 @@ const rateText = computed(() => {
   <section class="payout__rate" aria-labelledby="rate-heading">
     <div class="payout__rate-head">
       <h2 id="rate-heading">Rate</h2>
-      <span v-if="accepted" class="payout__rate-used" data-testid="rate-used">Accepted at this rate</span>
+      <span v-if="accepted" class="payout__rate-used payout__rate-used--accepted" data-testid="rate-used">Accepted at this rate</span>
+      <span v-else-if="locked && quote" class="payout__rate-used" data-testid="rate-used">Submitted at this rate</span>
       <DsCountdown
-        v-else-if="quote && (quoteState === 'active' || quoteState === 'expired')"
+        v-else-if="!locked && quote && (quoteState === 'active' || quoteState === 'expired')"
         :expires-at="quote.expiresAt"
         label="Held for"
         expired-label="Rate expired"
@@ -68,6 +70,7 @@ const rateText = computed(() => {
     <p v-else-if="quoteState === 'failed' && quoteError" class="payout__rate-note payout__rate-note--warn" role="alert">
       {{ quoteError.message }} Correlation ID <span class="mono">{{ quoteError.correlationId }}</span>
     </p>
+    <p v-else-if="locked" class="payout__rate-note muted">Locked until this submit is resolved.</p>
     <p v-else class="payout__rate-note muted">Choose a route and enter an amount, then get a rate. A rate is held for 30 seconds.</p>
 
     <DsButton

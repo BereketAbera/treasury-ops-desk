@@ -5,21 +5,23 @@ import RequestLogDrawer from './components/RequestLogDrawer.vue'
 import SimulateMenu from './components/SimulateMenu.vue'
 import { DsButton, DsDialog, DsIcon, type IconName } from './ds'
 import { api } from './lib/http'
-import { clearSession } from './lib/storage'
 import { resetScenario } from './demo'
 import { usePayoutsStore } from './stores/payouts'
 import { usePrefsStore } from './stores/prefs'
 import { useRequestLogStore } from './stores/requestLog'
+import { useSubmitsStore } from './stores/submits'
 
 const route = useRoute()
 const router = useRouter()
 const requestLog = useRequestLogStore()
 const payouts = usePayoutsStore()
 const prefs = usePrefsStore()
+const submits = useSubmitsStore()
 
 const navOpen = ref(false)
 const resetOpen = ref(false)
 const resetting = ref(false)
+const resetFailed = ref(false)
 
 const links: { to: string; label: string; icon: IconName; match: (path: string) => boolean }[] = [
   { to: '/', label: 'Payout instructions', icon: 'list', match: (path) => path === '/' },
@@ -37,15 +39,24 @@ function openRequestLog() {
   requestLog.isOpen = true
 }
 
+function openReset() {
+  resetFailed.value = false
+  resetOpen.value = true
+}
+
 async function resetDemo() {
+  if (submits.busy) return
   resetting.value = true
-  await api.request({ method: 'POST', path: '/api/demo/reset' })
+  const result = await api.request({ method: 'POST', path: '/api/demo/reset' })
+  resetting.value = false
+  // Without a confirmed reset the data is still there, and so is every submit made on it.
+  resetFailed.value = result.kind !== 'ok'
+  if (resetFailed.value) return
   resetScenario()
   requestLog.clear()
   prefs.reset()
-  clearSession('qc.form.')
+  submits.clear()
   payouts.clear()
-  resetting.value = false
   resetOpen.value = false
   await router.push({ path: '/', query: {} })
   await payouts.sync()
@@ -121,7 +132,7 @@ async function resetDemo() {
       <div class="topbar">
         <SimulateMenu />
         <DsButton icon="activity" @click="openRequestLog">Request log</DsButton>
-        <DsButton variant="ghost" icon="refresh" @click="resetOpen = true">Reset demo data</DsButton>
+        <DsButton variant="ghost" icon="refresh" @click="openReset">Reset demo data</DsButton>
       </div>
       <main id="main" class="shell__content" tabindex="-1">
         <RouterView />
@@ -136,9 +147,11 @@ async function resetDemo() {
         This restores the 60 seeded instructions and removes the payouts, batches and request log entries made in this
         tab. Nothing leaves your browser.
       </p>
+      <p v-if="submits.busy">A submit is on its way. Wait for its result before a reset.</p>
+      <p v-else-if="resetFailed" role="alert">The reset did not get an answer. Nothing was removed here. Try again.</p>
       <template #actions>
         <DsButton data-autofocus @click="resetOpen = false">Keep my changes</DsButton>
-        <DsButton variant="primary" :loading="resetting" @click="resetDemo">Reset demo data</DsButton>
+        <DsButton variant="primary" :loading="resetting" :disabled="submits.busy" @click="resetDemo">Reset demo data</DsButton>
       </template>
     </DsDialog>
   </div>

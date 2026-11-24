@@ -1,22 +1,37 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import BatchArrival from '@/components/BatchArrival.vue'
+import SubmissionStatus from '@/components/SubmissionStatus.vue'
 import { DsAmount, DsBanner, DsButton, DsCopyButton, DsStatusBadge, type StatusName } from '@/ds'
 import { decimalsOf } from '@/lib/currencies'
 import { formatDateTime, plural } from '@/lib/format'
 import { api } from '@/lib/http'
 import { newCorrelationId, newUuid } from '@/lib/ids'
+import type { AcceptedHow, BatchRetryResult } from '@/lib/submission'
 import { batchBadge, countBatch, type Batch, type BatchItem } from '@/lib/types'
+import { useSubmitsStore } from '@/stores/submits'
 
 const route = useRoute()
+const submits = useSubmitsStore()
 const batch = ref<Batch | null>(null)
 const loadState = ref<'loading' | 'ready' | 'missing' | 'failed'>('loading')
-const busy = ref<'retry' | number | null>(null)
+const checking = ref<number | null>(null)
 const notice = ref<{ tone: 'success' | 'danger' | 'warning'; text: string; correlationId?: string } | null>(null)
+/** Set by the form that submitted this batch, when the answer was a replay or came from a status check. */
+const arrival = ref<AcceptedHow | null>(null)
+
+const batchId = computed(() => String(route.params.id))
+// A retry is a submit like any other: one key, kept by the store until its outcome is known.
+const retry = shallowRef(submits.batchRetry(batchId.value))
+const retryState = computed(() => retry.value.state.value)
+const statusRegion = ref<{ focus: () => void } | null>(null)
 
 async function load(id: string) {
   loadState.value = 'loading'
   notice.value = null
+  const how: unknown = window.history.state?.arrival
+  arrival.value = how === 'replay' || how === 'status-check' ? how : null
   const result = await api.request<Batch>({ path: `/api/batches/${encodeURIComponent(id)}` })
   if (result.kind === 'ok') {
     batch.value = result.data
@@ -25,13 +40,21 @@ async function load(id: string) {
     batch.value = null
     loadState.value = result.kind === 'error' && result.status === 404 ? 'missing' : 'failed'
   }
+  void onRetryPhase(false)
 }
 
 watch(
-  () => String(route.params.id),
-  (id) => void load(id),
+  batchId,
+  (id, previous) => {
+    if (previous !== undefined) {
+      submits.release(retry.value)
+      retry.value = submits.batchRetry(id)
+    }
+    void load(id)
+  },
   { immediate: true },
 )
+onBeforeUnmount(() => submits.release(retry.value))
 
 const counts = computed(() => (batch.value ? countBatch(batch.value) : { total: 0, booked: 0, rejected: 0, unknown: 0 }))
 const booked = computed(() => batch.value?.items.filter((item) => item.status === 'booked') ?? [])
@@ -50,40 +73,54 @@ async function focusHeading() {
 }
 
 async function retryRejected() {
-  if (!batch.value || busy.value !== null || retryable.value.length === 0) return
-  busy.value = 'retry'
+  if (checking.value !== null || retry.value.locked.value || retryable.value.length === 0) return
   notice.value = null
-  const correlationId = newCorrelationId()
-  const bookedBefore = counts.value.booked
+  arrival.value = null
   // Only the rejected lines go out. Each gets a new item key: the old key would return the same rejection.
-  const items = retryable.value.map((item) => ({ line: item.line, itemKey: newUuid() }))
-  const result = await api.request<{ batch: Batch; retried: number[] }>({
-    method: 'POST',
-    path: `/api/batches/${batch.value.id}/retry`,
-    body: { items },
-    correlationId,
-  })
-  busy.value = null
-  if (result.kind === 'ok') {
-    batch.value = result.data.batch
-    const nowBooked = result.data.batch.items.filter((item) => result.data.retried.includes(item.line) && item.status === 'booked').length
-    notice.value = {
-      tone: nowBooked === items.length ? 'success' : 'warning',
-      text: `Retried ${plural(items.length, 'instruction')}: ${nowBooked} booked. The ${bookedBefore} booked earlier were not sent again.`,
-    }
-  } else {
-    notice.value = {
-      tone: 'danger',
-      text: result.kind === 'error' ? `${result.error.message} (${result.status})` : 'No answer arrived for the retry. Reload this page to see the state of each line before trying again.',
-      correlationId,
-    }
-  }
-  void focusHeading()
+  const body = { items: retryable.value.map((item) => ({ line: item.line, itemKey: newUuid() })) }
+  retry.value.holdDraft(body)
+  await retry.value.submit(body)
 }
 
+function resendRetry() {
+  return retry.value.retry(retry.value.draft() ?? undefined)
+}
+
+function retryNotice(result: BatchRetryResult, how: AcceptedHow): NonNullable<typeof notice.value> {
+  const nowBooked = result.batch.items.filter((item) => result.retried.includes(item.line) && item.status === 'booked').length
+  const before = countBatch(result.batch).booked - nowBooked
+  const lead = { answer: '', replay: 'Already received, not sent twice. ', 'status-check': 'The status check found this retry. It was received before the answer was lost. ' }[how]
+  return {
+    tone: nowBooked === result.retried.length ? 'success' : 'warning',
+    text: `${lead}Retried ${plural(result.retried.length, 'instruction')}: ${nowBooked} booked. The ${before} booked earlier were not sent again.`,
+  }
+}
+
+async function onRetryPhase(moveFocus: boolean) {
+  const current = retryState.value
+  if (current.phase === 'accepted') {
+    batch.value = current.result.batch
+    notice.value = retryNotice(current.result, current.how)
+    retry.value.startNew()
+    if (moveFocus) await focusHeading()
+  } else if (current.phase === 'final') {
+    notice.value = { tone: 'danger', text: `${current.message} (${current.status})`, correlationId: current.correlationId }
+    retry.value.startNew()
+    if (moveFocus) await focusHeading()
+  } else if (moveFocus && ['retryable', 'unknown', 'not-received'].includes(current.phase)) {
+    await nextTick()
+    statusRegion.value?.focus()
+  }
+}
+
+watch(
+  () => retryState.value.phase,
+  () => void onRetryPhase(true),
+)
+
 async function checkItem(item: BatchItem) {
-  if (!batch.value || busy.value !== null) return
-  busy.value = item.line
+  if (!batch.value || checking.value !== null || retry.value.busy.value) return
+  checking.value = item.line
   notice.value = null
   const correlationId = newCorrelationId()
   const result = await api.request<{ batch: Batch; line: number; received: boolean }>({
@@ -91,7 +128,7 @@ async function checkItem(item: BatchItem) {
     path: `/api/batches/${batch.value.id}/items/${item.line}/status-check`,
     correlationId,
   })
-  busy.value = null
+  checking.value = null
   if (result.kind === 'ok') {
     batch.value = result.data.batch
     notice.value = result.data.received
@@ -140,6 +177,18 @@ async function checkItem(item: BatchItem) {
         <strong>{{ counts.unknown }} outcome unknown</strong>.
       </p>
 
+      <BatchArrival v-if="arrival" :how="arrival" :batch-id="batch.id" />
+
+      <SubmissionStatus
+        v-if="retryState.phase !== 'idle' && retryState.phase !== 'accepted'"
+        ref="statusRegion"
+        :state="retryState"
+        what="retry"
+        @retry="resendRetry"
+        @check="retry.checkStatus()"
+        @resend="resendRetry"
+      />
+
       <DsBanner v-if="notice" :tone="notice.tone" announce="status" data-testid="batch-notice">
         <p>{{ notice.text }}</p>
         <p v-if="notice.correlationId" class="result__ids">
@@ -151,11 +200,20 @@ async function checkItem(item: BatchItem) {
       <section v-if="rejected.length > 0" class="card result__group" aria-labelledby="group-rejected" data-testid="group-rejected">
         <div class="result__group-head">
           <h2 id="group-rejected">Rejected ({{ rejected.length }})</h2>
-          <DsButton v-if="retryable.length > 0" variant="primary" icon="refresh" :loading="busy === 'retry'" data-testid="retry-rejected" @click="retryRejected">
+          <DsButton
+            v-if="retryable.length > 0"
+            variant="primary"
+            icon="refresh"
+            :loading="retry.busy.value"
+            :disabled="retry.locked.value && !retry.busy.value"
+            data-testid="retry-rejected"
+            @click="retryRejected"
+          >
             Retry the {{ retryable.length }} rejected
           </DsButton>
         </div>
-        <p>
+        <p v-if="retry.unresolved.value">A retry of rejected lines has gone out and its outcome is not known yet, so a line listed here may have been booked since.</p>
+        <p v-else>
           These were not booked and no money moved for them. The reason is next to each one.
           <template v-if="retryable.length > 0">
             Retry sends only {{ retryable.length === 1 ? 'this line' : `these ${retryable.length} lines` }}. The booked
@@ -221,7 +279,7 @@ async function checkItem(item: BatchItem) {
                 <td class="right" data-label="Amount"><DsAmount :minor="item.target.amountMinor" :currency="item.target.currency" :decimals="decimalsOf(item.target.currency)" /></td>
                 <td data-label="Status"><DsStatusBadge status="outcome_unknown" /></td>
                 <td data-label="Action">
-                  <DsButton size="sm" :loading="busy === item.line" data-testid="check-item" @click="checkItem(item)">Check status</DsButton>
+                  <DsButton size="sm" :loading="checking === item.line" data-testid="check-item" @click="checkItem(item)">Check status</DsButton>
                 </td>
               </tr>
             </tbody>
