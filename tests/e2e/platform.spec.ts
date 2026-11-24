@@ -78,9 +78,42 @@ test.describe('headers, storage and Storybook', () => {
     expect(seen[0]?.['x-attempt']).toBe('1')
   })
 
+  test('every screen names its environment, and the page has an icon and a social preview that load', async ({ page, request }) => {
+    await open(page, '/')
+    await expect(page.getByTestId('environment')).toHaveText('Sandbox · mock API')
+    await page.goto('/how-it-works')
+    await expect(page.getByTestId('environment')).toBeVisible()
+
+    const image = await page.locator('meta[property="og:image"]').getAttribute('content')
+    expect(image).toMatch(/^https:\/\/.+\/social\.png$/)
+    expect(await page.locator('meta[name="twitter:image"]').getAttribute('content')).toBe(image)
+    expect(await page.locator('meta[name="twitter:card"]').getAttribute('content')).toBe('summary_large_image')
+    // The tag carries the deployed address. The file itself is checked on the address under test.
+    for (const [path, type] of [
+      ['/social.png', 'image/png'],
+      ['/favicon.svg', 'image/svg+xml'],
+      ['/favicon-48.png', 'image/png'],
+      ['/apple-touch-icon.png', 'image/png'],
+    ] as const) {
+      const response = await request.get(path)
+      expect(response.status(), path).toBe(200)
+      expect(response.headers()['content-type'], path).toContain(type)
+    }
+  })
+
+  test('Storybook carries the product name and colours, and no optional text prop shows a "Set string" button', async ({ page }) => {
+    await page.goto('/storybook/?path=/story/components-statusbadge--one')
+    await expect(page).toHaveTitle(/Payout desk components$/)
+    await expect(page.getByRole('img', { name: 'Payout desk component library' })).toBeVisible()
+    await expect(page.getByPlaceholder('Edit string...')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Set string' })).toHaveCount(0)
+    // An empty text box means "not set": the badge keeps its own label.
+    await expect(page.frameLocator('#storybook-preview-iframe').locator('#storybook-root')).toHaveText('Completed')
+  })
+
   test('Storybook is served under /storybook/ with the component library', async ({ page }) => {
     await page.goto('/storybook/')
-    await expect(page).toHaveTitle(/Storybook/)
+    await expect(page).toHaveTitle(/Payout desk components/)
     await expect(page.locator('#storybook-explorer-tree')).toContainText('Components')
     await expect(page.locator('#storybook-explorer-tree')).toContainText('Foundations')
     // One group per component, each with a plain name.

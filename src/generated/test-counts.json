@@ -2,12 +2,12 @@
   "unit": 127,
   "component": 42,
   "endToEnd": {
-    "total": 103,
+    "total": 105,
     "projects": [
       {
         "name": "chromium",
         "label": "Chromium",
-        "tests": 91,
+        "tests": 93,
         "smoke": false
       },
       {
