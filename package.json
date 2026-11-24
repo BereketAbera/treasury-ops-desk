@@ -11,7 +11,7 @@
     "preview": "vite preview --port 3401 --strictPort",
     "storybook": "storybook dev -p 6006 --no-open",
     "lint": "eslint .",
-    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:live": "E2E_BASE_URL=https://treasury-ops-desk.vercel.app playwright test"

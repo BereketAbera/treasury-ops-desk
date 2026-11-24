@@ -31,7 +31,12 @@ async function apiAnswers(): Promise<boolean> {
 async function startMockApi(): Promise<boolean> {
   if (!('serviceWorker' in navigator)) return false
   try {
-    await worker.start({ onUnhandledFrame: 'bypass', quiet: true, serviceWorker: { url: '/mockServiceWorker.js' } })
+    // Where service workers are blocked, registration can reject or never settle. Do not wait for ever.
+    const started = worker.start({ onUnhandledFrame: 'bypass', quiet: true, serviceWorker: { url: '/mockServiceWorker.js' } })
+    const gaveUp = sleep(8_000).then(() => {
+      throw new Error('The mock API worker did not start in time')
+    })
+    await Promise.race([started, gaveUp])
   } catch {
     return false
   }

@@ -128,9 +128,9 @@ const ALL_COLUMNS: TableColumn<PayoutRow>[] = [
   { key: 'status', label: 'Status', sortable: true },
   { key: 'updated', label: 'Updated', sortable: true, numeric: true, hideOnPhone: true },
 ]
-// With the detail panel open the table is narrower: the panel already shows these three.
+// With the detail panel open the table is narrower: the panel already shows these columns.
 const columns = computed(() =>
-  panelOpen.value ? ALL_COLUMNS.filter((column) => !['source', 'rate', 'updated'].includes(column.key)) : ALL_COLUMNS,
+  panelOpen.value ? ALL_COLUMNS.filter((column) => !['route', 'source', 'rate', 'updated'].includes(column.key)) : ALL_COLUMNS,
 )
 
 function open(row: PayoutRow) {

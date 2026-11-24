@@ -230,7 +230,7 @@ onMounted(async () => {
 
     <section v-if="recent.length > 0" class="card batch__step" aria-labelledby="batch-recent-heading">
       <h2 id="batch-recent-heading">Recent batches</h2>
-      <div class="table-scroll" role="region" aria-label="Recent batches" tabindex="0">
+      <div class="table-scroll" role="region" aria-label="Recent batches table" tabindex="0">
         <table class="plain-table">
           <thead>
             <tr>

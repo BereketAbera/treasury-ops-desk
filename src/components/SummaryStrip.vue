@@ -81,7 +81,7 @@ const totals = computed(() => {
 .summary {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--space-3);
+  gap: var(--space-2);
   align-items: stretch;
 
   &__counts {
@@ -91,10 +91,11 @@ const totals = computed(() => {
   }
 
   &__count {
-    display: grid;
-    align-content: space-between;
-    gap: var(--space-1);
-    min-width: 128px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-width: 118px;
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--color-divider);
     border-top: 3px solid currentColor;
@@ -154,19 +155,27 @@ const totals = computed(() => {
   }
 
   &__list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px var(--space-5);
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 2px var(--space-4);
     margin: 0;
     padding: 0;
     list-style: none;
     font-size: var(--font-size-sm);
 
     li {
-      display: inline-flex;
+      display: flex;
       align-items: baseline;
+      justify-content: flex-end;
       gap: var(--space-1);
+      white-space: nowrap;
     }
+  }
+
+  &__rows {
+    min-width: 5ch;
+    font-size: var(--font-size-xs);
+    text-align: left;
   }
 
   &__rows::before {

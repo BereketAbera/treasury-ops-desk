@@ -689,6 +689,19 @@ const sendingText = computed(() => {
     gap: var(--space-2);
     font-size: var(--font-size-sm);
 
+    .kv {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
+
+    dd {
+      margin-bottom: var(--space-2);
+    }
+
+    .payout__cid {
+      flex-wrap: nowrap;
+    }
+
     h2 {
       font-size: var(--font-size-md);
     }
