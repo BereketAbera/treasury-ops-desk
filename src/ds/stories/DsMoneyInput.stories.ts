@@ -6,7 +6,7 @@ import DsMoneyInput from '../components/DsMoneyInput.vue'
 const meta: Meta<typeof DsMoneyInput> = {
   title: 'Components/MoneyInput',
   component: DsMoneyInput,
-  args: { currency: 'NGN', decimals: 2, invalid: false, disabled: false },
+  args: { currency: 'NGN', decimals: 2, invalid: false, disabled: false, required: false },
   argTypes: {
     currency: { control: 'text' },
     decimals: { control: 'inline-radio', options: [0, 2, 6] },

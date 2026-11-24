@@ -3,6 +3,8 @@ import type { StorybookConfig } from '@storybook/vue3-vite'
 const config: StorybookConfig = {
   stories: ['../src/ds/stories/*.stories.ts'],
   addons: ['@storybook/addon-docs'],
+  // The favicon and the brand image, written by design/build.sh.
+  staticDirs: ['./static'],
   framework: { name: '@storybook/vue3-vite', options: {} },
   core: { disableTelemetry: true, disableWhatsNewNotifications: true },
   // The app's public folder holds the mock API worker and the sample file. Storybook needs neither.

@@ -6,7 +6,7 @@ import DsTextInput from '../components/DsTextInput.vue'
 const meta: Meta<typeof DsField> = {
   title: 'Components/Field',
   component: DsField,
-  args: { label: 'Your reference', hint: '4 to 20 capital letters, digits or hyphens.', required: true },
+  args: { label: 'Your reference', hint: '4 to 20 capital letters, digits or hyphens.', required: true, error: '', id: '' },
   argTypes: {
     label: { control: 'text' },
     hint: { control: 'text' },
@@ -37,4 +37,4 @@ type Story = StoryObj<typeof DsField>
 
 export const Default: Story = {}
 export const WithError: Story = { args: { error: 'Use 4 to 20 capital letters, digits or hyphens, for example INV-20418.' } }
-export const Optional: Story = { args: { label: 'Note to approver', hint: undefined, required: false } }
+export const Optional: Story = { args: { label: 'Note to approver', hint: '', required: false } }

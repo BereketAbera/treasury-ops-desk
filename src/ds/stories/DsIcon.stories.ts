@@ -5,7 +5,7 @@ import { ICON_NAMES } from '../components/icons'
 const meta: Meta<typeof DsIcon> = {
   title: 'Components/Icon',
   component: DsIcon,
-  args: { name: 'check-circle', size: 16 },
+  args: { name: 'check-circle', size: 16, title: '' },
   argTypes: {
     name: { control: 'select', options: ICON_NAMES },
     size: { control: { type: 'number', min: 12, max: 48, step: 2 } },

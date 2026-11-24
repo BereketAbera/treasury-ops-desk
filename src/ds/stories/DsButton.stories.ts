@@ -5,7 +5,7 @@ import { ICON_NAMES } from '../components/icons'
 const meta: Meta<typeof DsButton> = {
   title: 'Components/Button',
   component: DsButton,
-  args: { variant: 'primary', size: 'md', loading: false, disabled: false },
+  args: { variant: 'primary', size: 'md', loading: false, disabled: false, href: '' },
   argTypes: {
     variant: { control: 'select', options: ['primary', 'secondary', 'ghost', 'danger'] },
     size: { control: 'inline-radio', options: ['sm', 'md'] },

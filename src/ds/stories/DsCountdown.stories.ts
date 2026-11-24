@@ -6,7 +6,7 @@ import DsCountdown from '../components/DsCountdown.vue'
 const meta: Meta<typeof DsCountdown> = {
   title: 'Components/Countdown',
   component: DsCountdown,
-  args: { seconds: 30 } as never,
+  args: { seconds: 30, warnAt: 10, label: 'Held for', expiredLabel: 'Rate expired' } as never,
   argTypes: {
     seconds: { control: { type: 'number', min: 0, max: 120, step: 1 }, description: 'Story only: seconds until the countdown ends.' },
     warnAt: { control: { type: 'number', min: 0, max: 60, step: 1 } },
@@ -31,11 +31,11 @@ const meta: Meta<typeof DsCountdown> = {
       const expiresAt = ref(Date.now() + seconds * 1000)
       const events = ref(0)
       const restart = () => (expiresAt.value = Date.now() + seconds * 1000)
-      return { expiresAt, events, restart }
+      return { args, expiresAt, events, restart }
     },
     template: `
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <DsCountdown :expires-at="expiresAt" label="Held for" expired-label="Rate expired" @expired="events += 1" />
+        <DsCountdown :expires-at="expiresAt" :warn-at="args.warnAt" :label="args.label" :expired-label="args.expiredLabel" @expired="events += 1" />
         <DsButton size="sm" @click="restart">Restart</DsButton>
         <span class="muted">expired events: {{ events }}</span>
       </div>`,

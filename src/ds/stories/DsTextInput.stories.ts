@@ -6,10 +6,12 @@ import DsTextInput from '../components/DsTextInput.vue'
 const meta: Meta<typeof DsTextInput> = {
   title: 'Components/TextInput',
   component: DsTextInput,
-  args: { placeholder: 'INV-20418', mono: true, disabled: false, invalid: false },
+  args: { placeholder: 'INV-20418', mono: true, disabled: false, invalid: false, required: false, inputmode: 'text', autocomplete: 'off' },
   argTypes: {
     type: { control: 'inline-radio', options: ['text', 'search'] },
+    inputmode: { control: 'select', options: ['text', 'numeric', 'decimal', 'search'] },
     placeholder: { control: 'text' },
+    autocomplete: { control: 'text' },
     maxlength: { control: { type: 'number', min: 1, max: 200, step: 1 } },
     // Set by Field through its slot, not by hand.
     id: { control: false },

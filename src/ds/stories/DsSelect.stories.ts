@@ -12,7 +12,7 @@ const OPTIONS = [
 const meta: Meta<typeof DsSelect> = {
   title: 'Components/Select',
   component: DsSelect,
-  args: { placeholder: 'Choose a route', disabled: false, invalid: false },
+  args: { placeholder: 'Choose a route', disabled: false, invalid: false, required: false },
   argTypes: {
     placeholder: { control: 'text' },
     // A list of objects is set in code, not in a text box.

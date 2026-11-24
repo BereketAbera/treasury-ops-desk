@@ -5,7 +5,7 @@ import { STATUS_LOOK, STATUS_NAMES } from '../components/status'
 const meta: Meta<typeof DsStatusBadge> = {
   title: 'Components/StatusBadge',
   component: DsStatusBadge,
-  args: { status: 'completed' },
+  args: { status: 'completed', label: '' },
   argTypes: { status: { control: 'select', options: STATUS_NAMES }, label: { control: 'text' } },
   parameters: {
     docs: {
