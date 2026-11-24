@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { findScenario, getScenario, onScenarioChange, setScenario, type ScenarioId } from '@/mocks/scenario'
+import { findScenario, getScenario, onScenarioChange, setScenario, type ScenarioId } from '@/demo'
 
 /** Reactive view of the mock API's active scenario. */
 export const useSimulateStore = defineStore('simulate', () => {

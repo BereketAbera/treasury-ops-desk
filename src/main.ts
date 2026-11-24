@@ -3,12 +3,12 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import './ds/tokens/tokens.css'
 import { connectRequestLog } from './lib/http'
-import { loadScenario } from './mocks/scenario'
+import { loadMockWorker, loadScenario } from './demo'
 import { createAppRouter } from './router'
 import { useRequestLogStore } from './stores/requestLog'
 import './styles/main.scss'
 
-const RELOAD_FLAG = 'kc.boot.reloaded'
+const RELOAD_FLAG = 'qc.boot.reloaded'
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 async function apiAnswers(): Promise<boolean> {
@@ -30,8 +30,7 @@ async function apiAnswers(): Promise<boolean> {
 async function startMockApi(): Promise<boolean> {
   if (!('serviceWorker' in navigator)) return false
   try {
-    // The mock API is loaded as its own chunk, so the app's code and the mock's code stay apart.
-    const { worker } = await import('./mocks/browser')
+    const { worker } = await loadMockWorker()
     // Where service workers are blocked, registration can reject or never settle. Do not wait for ever.
     const started = worker.start({ onUnhandledFrame: 'bypass', quiet: true, serviceWorker: { url: '/mockServiceWorker.js' } })
     const gaveUp = sleep(8_000).then(() => {
@@ -67,7 +66,8 @@ function showUnavailable() {
 async function boot() {
   const ready = await startMockApi()
   if (!ready) {
-    // A hard reload leaves the page outside the service worker's control. One plain reload fixes that.
+    // A hard reload leaves the page outside the service worker's control, and a tab left open across a
+    // deploy can ask for a chunk that no longer exists. One plain reload fixes both.
     let alreadyReloaded: boolean
     try {
       alreadyReloaded = sessionStorage.getItem(RELOAD_FLAG) === '1'

@@ -7,9 +7,9 @@ import { fakeFetch, sampleBody, samplePayout, type Reply } from './helpers'
 const policy: RetryPolicy = { maxAttempts: 3, baseDelayMs: 700, factor: 2, maxDelayMs: 6000, jitter: 0 }
 const sleep = async () => {}
 
-function setup(replies: Reply[] | ((call: { url: string; method: string }, index: number) => Reply), extra: { takeDuplicate?: () => boolean } = {}) {
+function setup(replies: Reply[] | ((call: { url: string; method: string }, index: number) => Reply)) {
   const fake = fakeFetch(replies)
-  const submission = createSubmission({ client: createApiClient({ fetch: fake.fetch }), policy, sleep, ...extra })
+  const submission = createSubmission({ client: createApiClient({ fetch: fake.fetch }), policy, sleep })
   const posts = () => fake.calls.filter((call) => call.method === 'POST')
   return { submission, calls: fake.calls, posts }
 }
@@ -124,18 +124,23 @@ describe('payout submission', () => {
     expect(posts()).toHaveLength(1)
   })
 
-  it('reports a replay when the same request is sent twice', async () => {
-    let armed = true
-    const { submission, posts } = setup(
-      [
-        { status: 201, body: samplePayout() },
-        { status: 201, body: samplePayout(), headers: { 'Idempotent-Replayed': 'true' } },
-      ],
-      { takeDuplicate: () => (armed ? !(armed = false) : false) },
-    )
+  it('treats a success that cannot be read as an unknown outcome, never as a reason to resend', async () => {
+    const { submission, posts } = setup([{ status: 200, headers: { 'Content-Type': 'text/html' } }])
     await submission.submit(sampleBody)
-    expect(posts()).toHaveLength(2)
-    expect(posts()[1]?.headers['Idempotency-Key']).toBe(posts()[0]?.headers['Idempotency-Key'])
+    expect(submission.state.value).toMatchObject({ phase: 'unknown', reason: 'server-error' })
+    expect(posts()).toHaveLength(1)
+  })
+
+  it('retries a gateway 504 that is not JSON with the same key, like any temporary failure', async () => {
+    const { submission, posts } = setup([{ status: 504, headers: { 'Content-Type': 'text/html' } }, { status: 201, body: samplePayout() }])
+    await submission.submit(sampleBody)
+    expect(submission.state.value).toMatchObject({ phase: 'accepted', attempts: 2 })
+    expect(new Set(posts().map((call) => call.headers['Idempotency-Key'])).size).toBe(1)
+  })
+
+  it('reports a replay when the API answers with the replay header', async () => {
+    const { submission } = setup([{ status: 201, body: samplePayout(), headers: { 'Idempotent-Replayed': 'true' } }])
+    await submission.submit(sampleBody)
     expect(submission.state.value).toMatchObject({ phase: 'accepted', how: 'replay', payout: { id: 'PO-48261' } })
   })
 
@@ -144,6 +149,20 @@ describe('payout submission', () => {
     const submission = createSubmission({ client: createApiClient({ fetch }), idempotencyKey: 'restored-key', mayHaveBeenSent: true })
     expect(submission.idempotencyKey.value).toBe('restored-key')
     expect(submission.state.value).toMatchObject({ phase: 'unknown', reason: 'reload' })
+  })
+
+  it('carries the attempt count of a restored submit on, in the count and in X-Attempt', async () => {
+    const fake = fakeFetch((call) =>
+      call.method === 'GET' ? { status: 200, body: { key: 'restored-key', received: false, payout: null } } : { status: 201, body: samplePayout() },
+    )
+    const submission = createSubmission({ client: createApiClient({ fetch: fake.fetch }), policy, sleep, idempotencyKey: 'restored-key', mayHaveBeenSent: true, attempts: 2 })
+    expect(submission.attempts.value).toBe(2)
+    await submission.checkStatus()
+    await submission.retry(sampleBody)
+    const post = fake.calls.find((call) => call.method === 'POST')
+    expect(post?.headers['X-Attempt']).toBe('3')
+    expect(post?.headers['Idempotency-Key']).toBe('restored-key')
+    expect(submission.attempts.value).toBe(3)
   })
 
   it('makes a new key on reset', async () => {

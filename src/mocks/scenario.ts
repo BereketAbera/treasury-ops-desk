@@ -10,6 +10,7 @@ export type ScenarioId =
   | 'duplicate'
   | 'short-quote'
   | 'partial-batch'
+  | 'batch-timeout'
   | 'polling-outage'
 
 export interface Scenario {
@@ -48,7 +49,7 @@ export const SCENARIOS: Scenario[] = [
   {
     id: 'timeout-received',
     label: 'Next submit times out, payout received',
-    watch: 'The answer never arrives. The form says the outcome is unknown and offers Check status, not a resend. The check finds the payout.',
+    watch: 'The answer never arrives. The form says the outcome is unknown and offers Check status, not a resend. The check finds the payout. Acts on a single payout submit, not on a batch.',
     sticky: false,
     shots: 1,
     tryPath: '/payouts/new?prefill=1',
@@ -57,7 +58,7 @@ export const SCENARIOS: Scenario[] = [
   {
     id: 'timeout-lost',
     label: 'Next submit times out, payout not received',
-    watch: 'Same timeout, but the request never reached the API. Check status finds nothing and only then offers a resend with the same key.',
+    watch: 'Same timeout, but the request never reached the API. Check status finds nothing and only then offers a resend with the same key. Acts on a single payout submit, not on a batch.',
     sticky: false,
     shots: 1,
     tryPath: '/payouts/new?prefill=1',
@@ -66,7 +67,7 @@ export const SCENARIOS: Scenario[] = [
   {
     id: 'fail-503',
     label: 'Next submit fails with 503',
-    watch: 'Three attempts fail with a backoff between them and a visible attempt count. The manual retry then goes through with the same key.',
+    watch: 'Three attempts fail with a backoff between them and a visible attempt count. The manual retry then goes through with the same key. Acts on the next payout submit or batch submit.',
     sticky: false,
     shots: 3,
     tryPath: '/payouts/new?prefill=1',
@@ -75,7 +76,7 @@ export const SCENARIOS: Scenario[] = [
   {
     id: 'duplicate',
     label: 'Duplicate submit',
-    watch: 'The form sends the same request twice with one key. The second answer is a replay: one payout exists, and the form says it was not sent twice.',
+    watch: 'The form sends the same request twice with one key. The second answer is a replay: one payout exists, and the form says it was not sent twice. Acts on a single payout submit, not on a batch.',
     sticky: false,
     shots: 1,
     tryPath: '/payouts/new?prefill=1',
@@ -100,6 +101,15 @@ export const SCENARIOS: Scenario[] = [
     tryLabel: 'Open the sample batch',
   },
   {
+    id: 'batch-timeout',
+    label: 'Next batch submit times out, batch received',
+    watch: 'The batch is booked, but the answer never arrives. The page says the outcome is unknown and lists the batch under Recent batches. Submitting again reuses the key and gets the first result.',
+    sticky: false,
+    shots: 1,
+    tryPath: '/batches/new?sample=1',
+    tryLabel: 'Open the sample batch',
+  },
+  {
     id: 'polling-outage',
     label: 'Polling outage',
     watch: 'The table sync fails. The table keeps its rows, marks them as possibly out of date, and backs off between tries.',
@@ -110,7 +120,7 @@ export const SCENARIOS: Scenario[] = [
   },
 ]
 
-const STORAGE_KEY = 'kc.scenario.v1'
+const STORAGE_KEY = 'qc.scenario.v1'
 
 interface State {
   id: ScenarioId
@@ -145,8 +155,10 @@ export function loadScenario(): void {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY)
     if (!raw) return
-    const parsed = JSON.parse(raw) as Partial<State>
-    if (isScenarioId(parsed.id)) state = { id: parsed.id, shotsLeft: Number(parsed.shotsLeft) || 0 }
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return
+    const { id, shotsLeft } = parsed as Partial<State>
+    if (isScenarioId(id)) state = { id, shotsLeft: Math.max(0, Math.floor(Number(shotsLeft) || 0)) }
   } catch {
     state = { id: 'normal', shotsLeft: 0 }
   }

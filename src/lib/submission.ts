@@ -31,12 +31,12 @@ export interface SubmissionDeps {
   policy?: RetryPolicy
   sleep?: RetryHooks['sleep']
   random?: RetryHooks['random']
-  /** True when the Simulate control asks for the request to be sent twice. */
-  takeDuplicate?: () => boolean
   /** Start from an earlier key, for example one restored after a reload. */
   idempotencyKey?: string
   /** The restored key may already have been sent: start in "outcome unknown". */
   mayHaveBeenSent?: boolean
+  /** Attempts already sent with the restored key, so the count and X-Attempt carry on. */
+  attempts?: number
 }
 
 interface KeyLookup {
@@ -48,7 +48,7 @@ interface KeyLookup {
 export function createSubmission(deps: SubmissionDeps) {
   const policy = deps.policy ?? SUBMIT_POLICY
   const idempotencyKey = ref(deps.idempotencyKey ?? newIdempotencyKey())
-  const attempts = ref(0)
+  const attempts = ref(Math.max(0, Math.floor(deps.attempts ?? 0)))
   const state = ref<SubmissionState>(
     deps.mayHaveBeenSent
       ? { phase: 'unknown', reason: 'reload', correlationId: null, checkFailed: false }
@@ -86,21 +86,6 @@ export function createSubmission(deps: SubmissionDeps) {
     attempts.value = made
 
     if (result.kind === 'ok') {
-      if (!result.replayed && deps.takeDuplicate?.()) {
-        // Simulated duplicate: the same request goes out again with the same key.
-        attempts.value += 1
-        state.value = { phase: 'sending', attempt: attempts.value, maxAttempts: policy.maxAttempts }
-        const second = await deps.client.request<Payout>({ ...options, attempt: attempts.value })
-        if (second.kind === 'ok') {
-          state.value = {
-            phase: 'accepted',
-            payout: second.data,
-            attempts: attempts.value,
-            how: second.replayed ? 'replay' : 'answer',
-          }
-          return
-        }
-      }
       state.value = { phase: 'accepted', payout: result.data, attempts: attempts.value, how: result.replayed ? 'replay' : 'answer' }
       return
     }
