@@ -82,7 +82,7 @@ pnpm test:e2e:live   # the same Playwright suite against the deployed address
 pnpm test:counts     # count the tests and write src/generated/test-counts.json (also run by pnpm build)
 ```
 
-Chromium runs the whole end-to-end suite. Firefox and WebKit run the tests tagged `@smoke`: one pass through the first visit, the happy submit, the timeout and status check, the partial batch, and the accessibility check of the table at desktop and phone width. Install the browsers once with `pnpm exec playwright install chromium firefox webkit`.
+Chromium runs the whole end-to-end suite. Firefox and WebKit run the tests tagged `@smoke`: one pass through the first visit, the happy submit, the timeout and status check, the partial batch, a batch with an unknown outcome and a form with errors on a phone, and the accessibility check of the table at desktop and phone width. Install the browsers once with `pnpm exec playwright install chromium firefox webkit`.
 
 The test counts on the "How it works" page are not typed in. `scripts/test-counts.mjs` runs the Vitest suite, asks Playwright to list its tests, and writes the numbers to `src/generated/test-counts.json`, which the page reads. `pnpm build` runs it first, and stops if a unit test fails.
 

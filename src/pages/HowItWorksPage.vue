@@ -203,7 +203,7 @@ const browsers = counts.endToEnd.projects
           log, the batch result, and a payout and a batch with an unknown outcome.
         </li>
         <li>Keyboard: table rows by arrow keys, Home, End and Enter; Escape closes the detail panel and returns focus to its row; at 390 pixels every Tab stop on the home page has a visible focus indicator.</li>
-        <li>Focus: the drawer and the dialog trap focus, close on Escape and return focus to the control that opened them; a route change and a batch retry move focus to the page heading; a submit with errors moves it to the error summary; an unknown outcome moves it to the notice.</li>
+        <li>Focus: the drawer and the dialog trap focus, close on Escape and return focus to the control that opened them; a route change and a batch retry move focus to the page heading; a submit with errors moves it to the error summary; an unknown outcome moves it to the notice. The summary and the notice are in view then.</li>
         <li>Reduced motion: with the system setting on, the drawer animation is off.</li>
         <li>Status is never colour alone: every badge is an icon, a text label and a tint, and a component test holds each status to that.</li>
         <li>
@@ -252,7 +252,8 @@ const browsers = counts.endToEnd.projects
               <td>
                 Playwright in {{ project.label }} against a local build<template v-if="project.smoke"
                   >: the smoke subset, which is the first visit, the happy submit, the timeout and status check, the partial
-                  batch, and axe on the table at desktop and phone width</template
+                  batch, a batch with an unknown outcome and a form with errors on a phone, and axe on the table at desktop
+                  and phone width</template
                 ><template v-else>: the payout form, batches, the table, the request log, headers, storage, Storybook and the accessibility checks above</template
                 >.
               </td>
