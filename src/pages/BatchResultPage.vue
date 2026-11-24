@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { DsAmount, DsBanner, DsButton, DsCopyButton, DsStatusBadge, type StatusName } from '@/ds'
 import { decimalsOf } from '@/lib/currencies'
 import { formatDateTime, plural } from '@/lib/format'
 import { api } from '@/lib/http'
 import { newCorrelationId, newUuid } from '@/lib/ids'
-import { countBatch, type Batch, type BatchItem } from '@/lib/types'
+import { batchBadge, countBatch, type Batch, type BatchItem } from '@/lib/types'
 
 const route = useRoute()
 const batch = ref<Batch | null>(null)
@@ -40,11 +40,14 @@ const unknown = computed(() => batch.value?.items.filter((item) => item.status =
 const retryable = computed(() => rejected.value.filter((item) => item.failure?.retryable))
 const notRetryable = computed(() => rejected.value.filter((item) => !item.failure?.retryable))
 
-const badge = computed<{ status: StatusName; label: string }>(() => {
-  const { booked: done, total } = counts.value
-  const status: StatusName = done === total ? 'booked' : done === 0 ? 'failed' : 'partially_completed'
-  return { status, label: `${done} of ${total} booked` }
-})
+const badge = computed<{ status: StatusName; label: string }>(() => batchBadge(batch.value ?? { items: [] }))
+
+// After an action removes the button that had focus (the rejected group disappears once it is retried),
+// focus goes to the page heading instead of falling back to the top of the document.
+async function focusHeading() {
+  await nextTick()
+  document.getElementById('page-title')?.focus()
+}
 
 async function retryRejected() {
   if (!batch.value || busy.value !== null || retryable.value.length === 0) return
@@ -75,6 +78,7 @@ async function retryRejected() {
       correlationId,
     }
   }
+  void focusHeading()
 }
 
 async function checkItem(item: BatchItem) {
@@ -100,38 +104,37 @@ async function checkItem(item: BatchItem) {
       correlationId,
     }
   }
+  void focusHeading()
 }
 </script>
 
 <template>
   <div class="page result">
-    <template v-if="loadState === 'loading'">
-      <h1 id="page-title" tabindex="-1">Batch result</h1>
-      <p class="muted" role="status">Loading the batch.</p>
-    </template>
+    <!-- One heading element for every state of the page, so the focus it gets on arrival is never lost. -->
+    <header class="result__head">
+      <div>
+        <h1 id="page-title" tabindex="-1">
+          <template v-if="loadState === 'loading'">Batch result</template>
+          <template v-else-if="loadState !== 'ready' || !batch">Batch not found</template>
+          <template v-else>Batch <span class="mono">{{ batch.id }}</span></template>
+        </h1>
+        <p v-if="loadState === 'loading'" class="muted" role="status">Loading the batch.</p>
+        <p v-else-if="batch" class="muted">Submitted {{ formatDateTime(batch.createdAt) }}</p>
+      </div>
+      <DsStatusBadge v-if="loadState === 'ready' && batch" :status="badge.status" :label="badge.label" data-testid="batch-badge" />
+    </header>
 
-    <template v-else-if="loadState !== 'ready' || !batch">
-      <h1 id="page-title" tabindex="-1">Batch not found</h1>
+    <template v-if="loadState !== 'loading' && (loadState !== 'ready' || !batch)">
       <DsBanner :tone="loadState === 'missing' ? 'neutral' : 'danger'" :title="loadState === 'missing' ? 'There is no batch with this ID' : 'The batch could not be loaded'">
         <p v-if="loadState === 'missing'">Batches live in this browser tab only. Resetting the demo data or opening a new tab removes them.</p>
         <p v-else>The API did not answer. Reload the page to try again.</p>
         <template #actions>
-          <RouterLink to="/batches/new" class="ds-button ds-button--secondary ds-button--md">Go to batches</RouterLink>
+          <RouterLink to="/batches" class="ds-button ds-button--secondary ds-button--md">Go to batches</RouterLink>
         </template>
       </DsBanner>
     </template>
 
-    <template v-else>
-      <header class="result__head">
-        <div>
-          <h1 id="page-title" tabindex="-1">
-            Batch <span class="mono">{{ batch.id }}</span>
-          </h1>
-          <p class="muted">Submitted {{ formatDateTime(batch.createdAt) }}</p>
-        </div>
-        <DsStatusBadge :status="badge.status" :label="badge.label" data-testid="batch-badge" />
-      </header>
-
+    <template v-else-if="batch">
       <p class="result__line" data-testid="batch-summary">
         {{ plural(counts.total, 'instruction') }}: <strong>{{ counts.booked }} booked</strong>, <strong>{{ counts.rejected }} rejected</strong>,
         <strong>{{ counts.unknown }} outcome unknown</strong>.
@@ -164,28 +167,28 @@ async function checkItem(item: BatchItem) {
           </template>
         </p>
         <div class="table-scroll" role="region" aria-label="Rejected instructions" tabindex="0">
-          <table class="plain-table">
+          <table class="plain-table plain-table--cards result__table">
             <thead>
               <tr>
                 <th scope="col" class="right">Line</th>
                 <th scope="col">Reference</th>
-                <th scope="col">Beneficiary</th>
+                <th scope="col" class="result__col-name">Beneficiary</th>
                 <th scope="col" class="right">Amount</th>
-                <th scope="col">Reason</th>
-                <th scope="col">Next step</th>
+                <th scope="col" class="result__col-reason">Reason</th>
+                <th scope="col" class="result__col-next">Next step</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="item in rejected" :key="item.line">
-                <td class="right num">{{ item.line }}</td>
-                <td class="mono">{{ item.reference }}</td>
-                <td>{{ item.beneficiary.name }}</td>
-                <td class="right"><DsAmount :minor="item.target.amountMinor" :currency="item.target.currency" :decimals="decimalsOf(item.target.currency)" /></td>
-                <td>
+                <td class="right num" data-label="Line in the file">{{ item.line }}</td>
+                <td class="mono" data-label="Reference">{{ item.reference }}</td>
+                <td class="result__name" data-label="Beneficiary">{{ item.beneficiary.name }}</td>
+                <td class="right" data-label="Amount"><DsAmount :minor="item.target.amountMinor" :currency="item.target.currency" :decimals="decimalsOf(item.target.currency)" /></td>
+                <td class="plain-table__wide" data-label="Reason">
                   <DsStatusBadge status="rejected" :label="item.failure?.retryable ? 'Rejected, can retry' : 'Rejected, final'" />
                   <span class="result__reason">{{ item.failure?.message }} <code>{{ item.failure?.code }}</code></span>
                 </td>
-                <td>{{ item.failure?.nextStep }}</td>
+                <td class="plain-table__wide" data-label="Next step">{{ item.failure?.nextStep }}</td>
               </tr>
             </tbody>
           </table>
@@ -199,12 +202,12 @@ async function checkItem(item: BatchItem) {
           resend it: check status first, so the beneficiary cannot be paid twice.
         </p>
         <div class="table-scroll" role="region" aria-label="Instructions with unknown outcome" tabindex="0">
-          <table class="plain-table">
+          <table class="plain-table plain-table--cards result__table">
             <thead>
               <tr>
                 <th scope="col" class="right">Line</th>
                 <th scope="col">Reference</th>
-                <th scope="col">Beneficiary</th>
+                <th scope="col" class="result__col-name">Beneficiary</th>
                 <th scope="col" class="right">Amount</th>
                 <th scope="col">Status</th>
                 <th scope="col">Action</th>
@@ -212,12 +215,12 @@ async function checkItem(item: BatchItem) {
             </thead>
             <tbody>
               <tr v-for="item in unknown" :key="item.line">
-                <td class="right num">{{ item.line }}</td>
-                <td class="mono">{{ item.reference }}</td>
-                <td>{{ item.beneficiary.name }}</td>
-                <td class="right"><DsAmount :minor="item.target.amountMinor" :currency="item.target.currency" :decimals="decimalsOf(item.target.currency)" /></td>
-                <td><DsStatusBadge status="outcome_unknown" /></td>
-                <td>
+                <td class="right num" data-label="Line in the file">{{ item.line }}</td>
+                <td class="mono" data-label="Reference">{{ item.reference }}</td>
+                <td class="result__name" data-label="Beneficiary">{{ item.beneficiary.name }}</td>
+                <td class="right" data-label="Amount"><DsAmount :minor="item.target.amountMinor" :currency="item.target.currency" :decimals="decimalsOf(item.target.currency)" /></td>
+                <td data-label="Status"><DsStatusBadge status="outcome_unknown" /></td>
+                <td data-label="Action">
                   <DsButton size="sm" :loading="busy === item.line" data-testid="check-item" @click="checkItem(item)">Check status</DsButton>
                 </td>
               </tr>
@@ -230,12 +233,12 @@ async function checkItem(item: BatchItem) {
         <h2 id="group-booked">Booked ({{ booked.length }})</h2>
         <p>These were accepted and each one is now a payout in the instruction table. They are never sent again by a retry.</p>
         <div class="table-scroll" role="region" aria-label="Booked instructions" tabindex="0">
-          <table class="plain-table">
+          <table class="plain-table plain-table--cards result__table">
             <thead>
               <tr>
                 <th scope="col" class="right">Line</th>
                 <th scope="col">Reference</th>
-                <th scope="col">Beneficiary</th>
+                <th scope="col" class="result__col-name">Beneficiary</th>
                 <th scope="col" class="right">Amount</th>
                 <th scope="col">Payout</th>
                 <th scope="col" class="right">Attempts</th>
@@ -243,14 +246,14 @@ async function checkItem(item: BatchItem) {
             </thead>
             <tbody>
               <tr v-for="item in booked" :key="item.line">
-                <td class="right num">{{ item.line }}</td>
-                <td class="mono">{{ item.reference }}</td>
-                <td>{{ item.beneficiary.name }}</td>
-                <td class="right"><DsAmount :minor="item.target.amountMinor" :currency="item.target.currency" :decimals="decimalsOf(item.target.currency)" /></td>
-                <td>
+                <td class="right num" data-label="Line in the file">{{ item.line }}</td>
+                <td class="mono" data-label="Reference">{{ item.reference }}</td>
+                <td class="result__name" data-label="Beneficiary">{{ item.beneficiary.name }}</td>
+                <td class="right" data-label="Amount"><DsAmount :minor="item.target.amountMinor" :currency="item.target.currency" :decimals="decimalsOf(item.target.currency)" /></td>
+                <td data-label="Payout">
                   <RouterLink v-if="item.payoutId" class="mono" :to="{ path: '/', query: { selected: item.payoutId } }">{{ item.payoutId }}</RouterLink>
                 </td>
-                <td class="right num">{{ item.attempts }}</td>
+                <td class="right num" data-label="Attempts">{{ item.attempts }}</td>
               </tr>
             </tbody>
           </table>
@@ -271,13 +274,18 @@ async function checkItem(item: BatchItem) {
             <DsCopyButton :value="batch.correlationId" label="Copy correlation ID" />
           </dd>
         </dl>
-        <p><RouterLink to="/batches/new">Upload another batch</RouterLink></p>
+        <p class="result__links">
+          <RouterLink to="/batches/new">Upload another batch</RouterLink>
+          <RouterLink to="/batches">All batches</RouterLink>
+        </p>
       </section>
     </template>
   </div>
 </template>
 
 <style lang="scss">
+@use '../ds/tokens/_tokens.scss' as t;
+
 .result {
   &__head {
     display: flex;
@@ -304,6 +312,19 @@ async function checkItem(item: BatchItem) {
     gap: var(--space-2);
   }
 
+  // The name stays on one line and the two text columns share what is left.
+  &__name {
+    white-space: nowrap;
+  }
+
+  &__col-reason {
+    width: 30%;
+  }
+
+  &__col-next {
+    width: 28%;
+  }
+
   &__reason {
     display: block;
     margin-top: 2px;
@@ -311,12 +332,37 @@ async function checkItem(item: BatchItem) {
 
   &__ids {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-1);
+    min-width: 0;
 
     .mono {
+      min-width: 0;
+      white-space: normal;
       overflow-wrap: anywhere;
+    }
+  }
+
+  &__links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-5);
+  }
+}
+
+@media (max-width: t.$breakpoint-phone) {
+  .result {
+    &__name {
+      white-space: normal;
+    }
+
+    &__group .kv {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+
+      dd {
+        margin-bottom: var(--space-2);
+      }
     }
   }
 }

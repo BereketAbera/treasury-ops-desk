@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { DsBanner, DsButton, DsCopyButton, DsIcon, DsStatusBadge } from '@/ds'
+import { DsAmount, DsBanner, DsButton, DsCopyButton, DsIcon, DsStatusBadge } from '@/ds'
+import { decimalsOf } from '@/lib/currencies'
 import { failureOf, sendWithRetry } from '@/lib/api'
 import { parseBatchCsv, type BatchRow } from '@/lib/batchCsv'
 import { formatDateTime, plural } from '@/lib/format'
@@ -9,13 +10,15 @@ import { api } from '@/lib/http'
 import { newCorrelationId, newIdempotencyKey } from '@/lib/ids'
 import { SUBMIT_POLICY } from '@/lib/retry'
 import { findRoute, routeLabel } from '@/lib/routes'
-import { countBatch, type Batch } from '@/lib/types'
+import { batchBadge, type Batch } from '@/lib/types'
 import { useSimulateStore } from '@/stores/simulate'
 
 const route = useRoute()
 const router = useRouter()
 const simulate = useSimulateStore()
 
+const fileInput = ref<HTMLInputElement | null>(null)
+const dragging = ref(false)
 const fileName = ref('')
 const rows = ref<BatchRow[]>([])
 const fileProblem = ref('')
@@ -43,16 +46,34 @@ function load(text: string, name: string) {
   }
 }
 
-async function onFile(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
+async function readFile(file: File | undefined) {
   if (!file) return
   if (file.size > 500_000) {
     rows.value = []
+    fileName.value = file.name
     fileProblem.value = 'The file is larger than 500 KB. Split it into smaller batches.'
     return
   }
   load(await file.text(), file.name)
+}
+
+async function onFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  await readFile(input.files?.[0])
+  // Clear the input, so choosing the same file again is still a change.
+  input.value = ''
+}
+
+async function onDrop(event: DragEvent) {
+  dragging.value = false
+  await readFile(event.dataTransfer?.files[0])
+}
+
+/** A short run tag, so each load of the sample has references no earlier load used. */
+function runTag(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  const bytes = crypto.getRandomValues(new Uint8Array(4))
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('')
 }
 
 async function loadSample() {
@@ -61,7 +82,11 @@ async function loadSample() {
     fileProblem.value = 'The sample file could not be loaded.'
     return
   }
-  load(await response.text(), 'sample-batch.csv')
+  // A reference names one payout, so the same file cannot be booked twice. The sample is given
+  // fresh references on each load: BAT-1001 in the file becomes BAT-<run>-1001 here.
+  const tag = runTag()
+  const text = (await response.text()).replace(/^BAT-(\d+),/gm, `BAT-${tag}-$1,`)
+  load(text, 'sample-batch.csv')
 }
 
 function removeInvalid() {
@@ -112,10 +137,9 @@ async function loadRecent() {
   if (result.kind === 'ok') recent.value = result.data.items
 }
 
-function batchBadge(batch: Batch) {
-  const counts = countBatch(batch)
-  const status = counts.booked === counts.total ? 'booked' : counts.booked === 0 ? 'failed' : 'partially_completed'
-  return { status, label: `${counts.booked} of ${counts.total} booked` } as const
+function amountOf(row: BatchRow) {
+  const target = findRoute(row.draft.routeId)?.target
+  return row.item && target ? { minor: row.item.targetAmountMinor, currency: target, decimals: decimalsOf(target) } : null
 }
 
 onMounted(async () => {
@@ -137,6 +161,7 @@ onMounted(async () => {
         Upload a CSV of payout instructions. Each line is checked here first, then booked by the API one by one. Some can
         be booked while others fail, and the result page says which.
       </p>
+      <p><RouterLink to="/batches">All batches</RouterLink></p>
     </header>
 
     <DsBanner v-if="!simulate.isNormal" tone="warning" :title="`Simulate is set to: ${simulate.scenario.label}`" data-testid="simulate-banner">
@@ -145,13 +170,27 @@ onMounted(async () => {
 
     <section class="card batch__step" aria-labelledby="batch-file-heading">
       <h2 id="batch-file-heading">1. Choose a file</h2>
-      <div class="batch__file">
-        <label class="batch__label" for="batch-file">Batch file (CSV)</label>
+      <div
+        class="batch__drop"
+        :class="{ 'batch__drop--over': dragging }"
+        data-testid="batch-drop"
+        @dragenter.prevent="dragging = true"
+        @dragover.prevent="dragging = true"
+        @dragleave.prevent="dragging = false"
+        @drop.prevent="onDrop"
+      >
+        <p id="batch-file-label" class="batch__label">Batch file (CSV)</p>
         <p id="batch-file-hint" class="muted">Columns: reference, beneficiary, bank, account, route, amount, purpose. Up to 1,000 lines.</p>
-        <input id="batch-file" class="batch__input" type="file" accept=".csv,text/csv" aria-describedby="batch-file-hint" @change="onFile" />
+        <div class="batch__pick">
+          <DsButton icon="upload" aria-describedby="batch-file-label batch-file-hint" data-testid="choose-file" @click="fileInput?.click()">Choose a CSV file</DsButton>
+          <span class="batch__file-name" data-testid="file-name">{{ fileName || 'No file chosen' }}</span>
+          <span class="muted batch__drop-hint">or drop a file here</span>
+        </div>
+        <!-- The native control is hidden and kept out of the tab order. The button above opens it. -->
+        <input ref="fileInput" id="batch-file" hidden type="file" accept=".csv,text/csv" aria-label="Batch file (CSV)" @change="onFile" />
       </div>
       <div class="batch__actions">
-        <DsButton icon="upload" data-testid="load-sample" @click="loadSample">Load the sample batch (12 lines)</DsButton>
+        <DsButton data-testid="load-sample" @click="loadSample">Load the sample batch (12 lines)</DsButton>
         <a href="/sample-batch.csv" download>Download the sample file</a>
       </div>
       <DsBanner v-if="fileProblem" tone="danger" title="This file cannot be used" announce="alert">
@@ -166,7 +205,7 @@ onMounted(async () => {
         >: {{ plural(rows.length, 'instruction') }}, {{ valid.length }} valid, {{ invalid.length }} with problems.
       </p>
       <div class="table-scroll" role="region" aria-label="Instructions in the file" tabindex="0">
-        <table class="plain-table">
+        <table class="plain-table plain-table--cards">
           <thead>
             <tr>
               <th scope="col" class="right">Line</th>
@@ -179,14 +218,16 @@ onMounted(async () => {
           </thead>
           <tbody>
             <tr v-for="row in rows" :key="row.line">
-              <td class="right num">{{ row.line }}</td>
-              <td class="mono">{{ row.draft.reference }}</td>
-              <td>{{ row.draft.beneficiaryName }}</td>
-              <td>{{ findRoute(row.draft.routeId) ? routeLabel(findRoute(row.draft.routeId)!) : row.draft.routeId }}</td>
-              <td class="right num">
-                {{ row.draft.amount }} <span class="muted">{{ findRoute(row.draft.routeId)?.target }}</span>
+              <td class="right num" data-label="Line in the file">{{ row.line }}</td>
+              <td class="mono" data-label="Reference">{{ row.draft.reference }}</td>
+              <td data-label="Beneficiary">{{ row.draft.beneficiaryName }}</td>
+              <td data-label="Route">{{ findRoute(row.draft.routeId) ? routeLabel(findRoute(row.draft.routeId)!) : row.draft.routeId }}</td>
+              <td class="right num" data-label="Amount">
+                <!-- A valid amount is shown the way every other amount is. A problem amount is shown as typed. -->
+                <DsAmount v-if="amountOf(row)" v-bind="amountOf(row)!" />
+                <template v-else>{{ row.draft.amount }} <span class="muted">{{ findRoute(row.draft.routeId)?.target }}</span></template>
               </td>
-              <td>
+              <td :class="{ 'plain-table__wide': !row.item }" data-label="Check">
                 <span v-if="row.item" class="batch__ok"><DsIcon name="check-circle" :size="14" /> Valid</span>
                 <ul v-else class="batch__problems">
                   <li v-for="problem in row.problems" :key="problem"><DsIcon name="x-circle" :size="14" /> {{ problem }}</li>
@@ -218,7 +259,10 @@ onMounted(async () => {
         announce="alert"
       >
         <p>{{ failure.message }}</p>
-        <p v-if="failure.kind === 'unknown'">Do not upload it again. Look for it under Recent batches below. Submitting again from this page reuses the same key, so it cannot be booked twice.</p>
+        <p v-if="failure.kind === 'unknown'">
+          Do not upload the file again: a new upload gets a new key. Look for the batch under Recent batches below. Submitting
+          again from this page is safe, because it reuses the same key and the API returns the first result.
+        </p>
         <p v-else-if="failure.kind === 'retryable'">Nothing was booked. Submitting again reuses the same idempotency key.</p>
         <p v-else>Sending the same batch again will not help.</p>
         <p class="batch__key">
@@ -231,7 +275,7 @@ onMounted(async () => {
     <section v-if="recent.length > 0" class="card batch__step" aria-labelledby="batch-recent-heading">
       <h2 id="batch-recent-heading">Recent batches</h2>
       <div class="table-scroll" role="region" aria-label="Recent batches table" tabindex="0">
-        <table class="plain-table">
+        <table class="plain-table plain-table--cards">
           <thead>
             <tr>
               <th scope="col">Batch</th>
@@ -241,11 +285,11 @@ onMounted(async () => {
           </thead>
           <tbody>
             <tr v-for="batch in recent" :key="batch.id">
-              <td>
+              <td data-label="Batch">
                 <RouterLink :to="`/batches/${batch.id}`" class="mono">{{ batch.id }}</RouterLink>
               </td>
-              <td class="num">{{ formatDateTime(batch.createdAt) }}</td>
-              <td><DsStatusBadge :status="batchBadge(batch).status" :label="batchBadge(batch).label" /></td>
+              <td class="num" data-label="Created">{{ formatDateTime(batch.createdAt) }}</td>
+              <td data-label="Result"><DsStatusBadge :status="batchBadge(batch).status" :label="batchBadge(batch).label" /></td>
             </tr>
           </tbody>
         </table>
@@ -261,19 +305,38 @@ onMounted(async () => {
     gap: var(--space-3);
   }
 
-  &__file {
+  &__drop {
     display: grid;
     gap: var(--space-1);
+    padding: var(--space-4);
+    border: 1px dashed var(--color-control-border);
+    border-radius: var(--radius-md);
+    background: var(--color-canvas);
     font-size: var(--font-size-sm);
+
+    &--over {
+      border-style: solid;
+      border-color: var(--color-primary);
+      background: var(--color-row-selected);
+    }
   }
 
   &__label {
     font-weight: var(--font-weight-bold);
   }
 
-  &__input {
-    max-width: 100%;
-    font: inherit;
+  &__pick {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    margin-top: var(--space-2);
+  }
+
+  &__file-name {
+    min-width: 0;
+    font-weight: var(--font-weight-medium);
+    overflow-wrap: anywhere;
   }
 
   &__actions {
@@ -291,6 +354,7 @@ onMounted(async () => {
     gap: var(--space-1);
 
     .mono {
+      white-space: normal;
       overflow-wrap: anywhere;
     }
   }
