@@ -9,7 +9,7 @@ const route = useRoute()
     <h1 id="page-title" tabindex="-1">Page not found</h1>
     <p class="page__lead">
       There is no page at <span class="mono mono--wrap">{{ route.path }}</span
-      >. The address may be mistyped, or the page may have moved.
+      >. The address may be mistyped, or the link may be old.
     </p>
     <ul>
       <li><RouterLink to="/">Payout instructions</RouterLink></li>

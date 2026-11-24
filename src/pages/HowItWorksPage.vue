@@ -149,7 +149,7 @@ const browsers = counts.endToEnd.projects
         <li>An identity provider for sign-in, with roles deciding who can create, approve and release. There is no login here.</li>
         <li>Static hosting behind a CDN for the built files: HTML that is always revalidated, and hashed assets cached for a long time.</li>
         <li>Real-user monitoring and tracing that pick up the same correlation ID, so a request can be followed from the click to the backend logs. The request log drawer stands in for that here.</li>
-        <li>Server push or a shorter poll for status changes. Polling is used here because it is simple to reason about and to fail.</li>
+        <li>Server push or a shorter poll for status changes. Polling is used here because it is simple to reason about, and so is a poll that fails.</li>
         <li>Approval by a second person before release. The seeded "awaiting approval" rows show the state, but there is no approve action.</li>
         <li>Server-side paging, sorting and filtering for the table.</li>
         <li>The component library published as a versioned package in a private package registry, with a changelog, in place of a folder in this repository.</li>
@@ -184,7 +184,7 @@ const browsers = counts.endToEnd.projects
       <h3>Checked on every run</h3>
       <ul>
         <li>
-          axe-core on every page and on the states that matter (detail panel, empty and out-of-date table, Simulate panel,
+          axe-core on every page and on these states (detail panel, empty and out-of-date table, Simulate panel,
           request log, dialog, form with errors, outcome unknown, batch result), with the rule tags <code>wcag2a</code>,
           <code>wcag2aa</code>, <code>wcag21a</code> and <code>wcag21aa</code>, at desktop width and at 390 pixels.
         </li>
