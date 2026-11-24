@@ -56,5 +56,6 @@
   --motion-ease: cubic-bezier(0.2, 0, 0.2, 1);
   --shadow-overlay: 0 8px 28px rgba(22, 34, 46, 0.22);
   --breakpoint-phone: 720px;
+  --breakpoint-cards: 1000px;
   --breakpoint-desk: 1100px;
 }

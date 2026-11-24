@@ -71,6 +71,7 @@ export const tokens = {
   },
   "breakpoint": {
     "phone": "720px",
+    "cards": "1000px",
     "desk": "1100px"
   }
 } as const

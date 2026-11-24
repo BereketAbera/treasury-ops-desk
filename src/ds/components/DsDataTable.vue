@@ -43,7 +43,7 @@ const skeletonRows = Array.from({ length: 12 }, (_, index) => index)
 
 const rowCount = computed(() => props.rows.length)
 
-// The stacked phone layout has no column headers to click, so the same sort is offered as one select.
+// The card layout has no column headers to click, so the same sort is offered as one select.
 const sortSelectId = `table-sort-${useId()}`
 const sortChoices = computed(() =>
   props.columns
@@ -236,7 +236,7 @@ defineExpose({ focusRow })
     overflow: auto;
   }
 
-  // Shown in the stacked phone layout only, where the column headers are not rendered.
+  // Shown in the card layout only, where the column headers are not rendered.
   &__phone-sort {
     display: none;
   }
@@ -362,8 +362,9 @@ defineExpose({ focusRow })
   }
 }
 
-// Phone: each row becomes a card with its labels, and the page scrolls instead of the table.
-@media (max-width: t.$breakpoint-phone) {
+// Up to the width where the columns fit, each row is a card with its labels, and the page scrolls
+// instead of the table. So no column is ever off screen in a sideways scroller.
+@media (max-width: t.$breakpoint-cards) {
   .ds-table {
     background: transparent;
 

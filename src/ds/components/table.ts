@@ -8,7 +8,7 @@ export interface TableColumn<Row> {
   text?: (row: Row) => string
   /** Tabular numerals, for amounts and rates. */
   numeric?: boolean
-  /** Left out of the stacked phone layout. */
+  /** Left out of the card layout, which a phone and a narrow window get. */
   hideOnPhone?: boolean
 }
 

@@ -31,17 +31,21 @@ import { useMediaQuery } from '@/lib/useMediaQuery'
 import { usePayoutsStore, type PayoutRow } from '@/stores/payouts'
 import { isDensity, usePrefsStore } from '@/stores/prefs'
 
-/** Cards shown at first on a phone, and added by each "Show more". */
-const PHONE_PAGE = 15
+/** Cards shown at first in the card layout, and added by each "Show more". */
+const CARD_PAGE = 15
 
 const route = useRoute()
 const router = useRouter()
 const store = usePayoutsStore()
 const prefs = usePrefsStore()
 const isNarrow = useMediaQuery('(max-width: 1100px)')
-const isPhone = useMediaQuery('(max-width: 720px)')
-const isMedium = useMediaQuery('(max-width: 1360px)')
+// The table's own breakpoint (cards, in tokens.json): up to here its columns do not fit, and each row is a card.
+const isCards = useMediaQuery('(max-width: 1000px)')
+const isMedium = useMediaQuery('(max-width: 1425px)')
 const isCompact = useMediaQuery('(max-width: 1200px)')
+// Up to here the detail opens in a drawer, because the table does not fit beside a panel.
+const isDrawer = useMediaQuery('(max-width: 1250px)')
+const isTightSplit = useMediaQuery('(max-width: 1360px)')
 const table = ref<{ focusRow: (index: number) => Promise<void> } | null>(null)
 
 // Filters, sort and the selected row live in the URL, so a reload or a shared link shows the same view.
@@ -123,20 +127,20 @@ const sorted = computed(() => {
   return [...filtered.value].sort((a, b) => factor * compare(a, b) || b.createdAt.localeCompare(a.createdAt))
 })
 
-// A phone shows the list a page at a time. A desktop shows every row and scrolls inside the table.
-const phoneLimit = ref(PHONE_PAGE)
-const shown = computed(() => (isPhone.value ? sorted.value.slice(0, phoneLimit.value) : sorted.value))
-const moreCount = computed(() => Math.min(PHONE_PAGE, sorted.value.length - shown.value.length))
+// The card layout shows the list a page at a time. The table shows every row and scrolls inside itself.
+const cardLimit = ref(CARD_PAGE)
+const shown = computed(() => (isCards.value ? sorted.value.slice(0, cardLimit.value) : sorted.value))
+const moreCount = computed(() => Math.min(CARD_PAGE, sorted.value.length - shown.value.length))
 
 async function showMore() {
   const firstNew = shown.value.length
-  phoneLimit.value += PHONE_PAGE
+  cardLimit.value += CARD_PAGE
   await nextTick()
   void table.value?.focusRow(firstNew)
 }
 
 const selected = computed(() => store.rows.find((row) => row.id === selectedId.value) ?? null)
-const panelOpen = computed(() => selected.value !== null && !isNarrow.value)
+const panelOpen = computed(() => selected.value !== null && !isDrawer.value)
 
 const ALL_COLUMNS: TableColumn<PayoutRow>[] = [
   { key: 'id', label: 'Reference', sortable: true },
@@ -156,6 +160,7 @@ const columns = computed(() => {
   if (isMedium.value) hidden.push('source', 'updated')
   if (isCompact.value) hidden.push('route')
   if (panelOpen.value || isNarrow.value) hidden.push('route', 'source', 'rate', 'updated')
+  if (panelOpen.value && isTightSplit.value) hidden.push('created')
   return ALL_COLUMNS.filter((column) => !hidden.includes(column.key))
 })
 
@@ -166,7 +171,7 @@ function open(row: PayoutRow) {
 function closeDetail() {
   const index = sorted.value.findIndex((row) => row.id === selectedId.value)
   setQuery({ selected: null })
-  if (index >= 0 && !isNarrow.value) void table.value?.focusRow(index)
+  if (index >= 0 && !isDrawer.value) void table.value?.focusRow(index)
 }
 
 function clearFilters() {
@@ -222,6 +227,15 @@ watch(selectedId, (id) => {
   if (id) missingId.value = null
 })
 
+// One count line. The card layout shows part of the list, so there it counts the cards on screen.
+const countText = computed(() => {
+  const total = store.rows.length
+  const onScreen = shown.value.length
+  return onScreen < sorted.value.length && sorted.value.length < total
+    ? `Showing ${onScreen} of ${sorted.value.length} matching instructions, ${total} in all`
+    : `Showing ${onScreen} of ${total} instructions`
+})
+
 // Screen readers hear the new count when a filter, the search or the sort changes. Polling does not
 // write here, so a table that refreshes every few seconds stays quiet.
 const announcement = ref('')
@@ -229,12 +243,12 @@ let announceTimer: ReturnType<typeof setTimeout> | null = null
 const viewKey = computed(() => [search.value, statusFilter.value, routeFilter.value, currencyFilter.value, sort.value.key, sort.value.direction].join('|'))
 
 watch(viewKey, () => {
-  phoneLimit.value = PHONE_PAGE
+  cardLimit.value = CARD_PAGE
   if (announceTimer !== null) clearTimeout(announceTimer)
   announceTimer = setTimeout(() => {
     const column = ALL_COLUMNS.find((item) => item.key === sort.value.key)?.label ?? 'Created'
     const order = sort.value.direction === 'asc' ? 'ascending' : 'descending'
-    announcement.value = `Showing ${sorted.value.length} of ${store.rows.length} instructions, sorted by ${column.toLowerCase()}, ${order}.`
+    announcement.value = `${countText.value}, sorted by ${column.toLowerCase()}, ${order}.`
   }, 400)
 })
 onBeforeUnmount(() => {
@@ -369,14 +383,13 @@ const failureText = computed(() => {
           </template>
         </DsDataTable>
 
-        <div v-if="isPhone && store.loaded && sorted.length > 0" class="desk__more">
-          <span class="muted num" data-testid="shown-count">{{ shown.length }} of {{ sorted.length }} shown</span>
-          <DsButton v-if="moreCount > 0" data-testid="show-more" @click="showMore">Show {{ moreCount }} more</DsButton>
+        <div v-if="isCards && moreCount > 0" class="desk__more">
+          <DsButton data-testid="show-more" @click="showMore">Show {{ moreCount }} more</DsButton>
         </div>
 
         <div class="desk__foot">
           <span data-testid="row-count">
-            <template v-if="store.loaded">Showing {{ sorted.length }} of {{ store.rows.length }} instructions</template>
+            <template v-if="store.loaded">{{ countText }}</template>
             <template v-else-if="store.neverLoaded">No instructions loaded yet</template>
             <template v-else>Loading instructions</template>
           </span>
@@ -401,13 +414,13 @@ const failureText = computed(() => {
           </button>
         </header>
         <div class="desk__panel-body">
-          <PayoutDetail :payout="selected" />
+          <PayoutDetail :key="selected.id" :payout="selected" />
         </div>
       </aside>
     </div>
 
-    <DsDrawer :open="selected !== null && isNarrow" :title="selected ? `Payout ${selected.id}` : 'Payout'" @close="closeDetail">
-      <PayoutDetail v-if="selected" :payout="selected" />
+    <DsDrawer :open="selected !== null && isDrawer" :title="selected ? `Payout ${selected.id}` : 'Payout'" @close="closeDetail">
+      <PayoutDetail v-if="selected" :key="selected.id" :payout="selected" />
     </DsDrawer>
   </div>
 </template>
@@ -516,10 +529,6 @@ const failureText = computed(() => {
     justify-items: center;
     gap: var(--space-2);
     color: var(--color-ink);
-  }
-
-  &__more {
-    display: none;
   }
 
   &__foot {
@@ -639,10 +648,10 @@ const failureText = computed(() => {
   }
 }
 
-@media (max-width: t.$breakpoint-phone) {
+// The card layout: the page scrolls, and the cards sit on it.
+@media (max-width: t.$breakpoint-cards) {
   .desk {
     height: auto;
-    padding: var(--space-4);
 
     &__work {
       flex: none;
@@ -671,25 +680,12 @@ const failureText = computed(() => {
 
     &__more {
       display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--space-2) var(--space-3);
       padding: var(--space-1) 0 var(--space-3);
-      font-size: var(--font-size-sm);
     }
 
     &__foot {
       padding: var(--space-2) 0;
       border-top: 0;
-    }
-
-    &__ref {
-      display: inline-flex;
-      align-items: center;
-      min-width: 44px;
-      min-height: 44px;
-      justify-content: flex-end;
     }
 
     &__name {
@@ -699,10 +695,27 @@ const failureText = computed(() => {
   }
 
   .filters {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     padding: 0 0 var(--space-3);
     border-bottom: 0;
+  }
+}
+
+@media (max-width: t.$breakpoint-phone) {
+  .desk {
+    padding: var(--space-4);
+
+    &__ref {
+      display: inline-flex;
+      align-items: center;
+      min-width: 44px;
+      min-height: 44px;
+      justify-content: flex-end;
+    }
+  }
+
+  .filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
 
     &__field,
     &__field--search {
