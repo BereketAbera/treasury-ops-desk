@@ -58,7 +58,7 @@ async function resetDemo() {
 
     <header class="rail">
       <div class="rail__brand">
-        <span class="rail__mark" aria-hidden="true">Q</span>
+        <img class="rail__mark" src="/favicon.svg" width="28" height="28" alt="" />
         <span class="rail__names">
           <span class="rail__company">Quillmere Commercial</span>
           <span class="rail__product">Payout desk</span>
@@ -73,6 +73,7 @@ async function resetDemo() {
           <DsIcon :name="navOpen ? 'close' : 'menu'" />
           <span>Menu</span>
         </button>
+        <span class="rail__env" data-testid="environment">Sandbox · mock API</span>
       </div>
       <nav id="rail-nav" class="rail__nav" :class="{ 'rail__nav--open': navOpen }" aria-label="Main">
         <ul>
@@ -203,6 +204,7 @@ async function resetDemo() {
 
   &__brand {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-3) var(--space-4);
@@ -210,16 +212,9 @@ async function resetDemo() {
   }
 
   &__mark {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     flex: none;
     width: 28px;
     height: 28px;
-    border-radius: var(--radius-md);
-    background: var(--color-primary);
-    color: var(--color-on-primary);
-    font-weight: var(--font-weight-bold);
   }
 
   &__names {
@@ -235,6 +230,18 @@ async function resetDemo() {
 
   &__product {
     font-weight: var(--font-weight-bold);
+  }
+
+  // Which environment this is. An operations tool says so on every screen.
+  &__env {
+    order: 1;
+    margin-right: auto;
+    padding: 1px var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--color-neutral-tint);
+    color: var(--color-neutral-text);
+    font-size: var(--font-size-xs);
+    white-space: nowrap;
   }
 
   &__toggle {
