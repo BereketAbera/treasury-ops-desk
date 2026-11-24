@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { ApiClient } from '@/lib/api'
-import { api as defaultApi } from '@/lib/http'
+import { api } from '@/lib/http'
 import { backoffDelay, POLL_POLICY } from '@/lib/retry'
 import type { Payout, PayoutListResponse } from '@/lib/types'
 
@@ -25,7 +24,6 @@ export const usePayoutsStore = defineStore('payouts', () => {
   const nextTryInMs = ref<number | null>(null)
   const lastError = ref<{ status: number | null; correlationId: string } | null>(null)
 
-  let client: ApiClient = defaultApi
   let timer: ReturnType<typeof setTimeout> | null = null
   let polling = false
   let inFlight: Promise<boolean> | null = null
@@ -40,11 +38,13 @@ export const usePayoutsStore = defineStore('payouts', () => {
   })
 
   const isStale = computed(() => syncState.value === 'failing')
+  /** Nothing has ever arrived and the sync is failing: there are no rows to fall back on. */
+  const neverLoaded = computed(() => !loaded.value && syncState.value === 'failing')
 
   async function sync(): Promise<boolean> {
     if (inFlight) return inFlight
     inFlight = (async () => {
-      const result = await client.request<PayoutListResponse>({ path: '/api/payouts', background: true })
+      const result = await api.request<PayoutListResponse>({ path: '/api/payouts', background: true })
       if (result.kind === 'ok') {
         items.value = result.data.items
         const known = new Set(result.data.items.map((item) => item.id))
@@ -113,11 +113,6 @@ export const usePayoutsStore = defineStore('payouts', () => {
     lastError.value = null
   }
 
-  /** For tests: swap the API client. */
-  function useClient(next: ApiClient) {
-    client = next
-  }
-
   return {
     items,
     accepted,
@@ -125,6 +120,7 @@ export const usePayoutsStore = defineStore('payouts', () => {
     loaded,
     syncState,
     isStale,
+    neverLoaded,
     lastSyncedAt,
     failedSyncs,
     nextTryInMs,
@@ -135,6 +131,5 @@ export const usePayoutsStore = defineStore('payouts', () => {
     addAccepted,
     replace,
     clear,
-    useClient,
   }
 })
