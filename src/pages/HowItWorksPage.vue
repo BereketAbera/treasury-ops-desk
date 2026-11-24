@@ -14,6 +14,7 @@ const browsers = counts.endToEnd.projects
       <p class="page__lead">
         Payout desk is a sample internal tool for a treasury operations team. This page says what is real, what is
         simulated, and why a few things are built the way they are. Sample by Bereket A.
+        <a href="https://github.com/BereketAbera/treasury-ops-desk" rel="noopener noreferrer">Source on GitHub</a>.
       </p>
     </header>
 
