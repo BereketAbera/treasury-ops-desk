@@ -17,8 +17,13 @@ describe('classifyStatus', () => {
     for (const status of [422, 409, 400, 404]) expect(classifyStatus(status)).toBe('final')
   })
 
-  it('treats 500 as an unknown outcome, not as a safe retry', () => {
-    expect(classifyStatus(500)).toBe('unknown')
+  it('treats 408 and 425 as retryable, and no other 4xx but 429', () => {
+    for (const status of [408, 425]) expect(classifyStatus(status)).toBe('retryable')
+    for (let status = 400; status < 500; status += 1) if (![408, 425, 429].includes(status)) expect(classifyStatus(status), String(status)).toBe('final')
+  })
+
+  it('treats 500 and every other 5xx as an unknown outcome, never as a final answer', () => {
+    for (const status of [500, 501, 505, 507, 520, 599]) expect(classifyStatus(status), String(status)).toBe('unknown')
   })
 })
 

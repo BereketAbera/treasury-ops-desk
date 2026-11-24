@@ -1,13 +1,13 @@
 // What to do after an answer, or after no answer.
 //
-//   retryable  A temporary failure (503, 429, 502, 504). It does not prove the
-//              work was not done, so the resend is only safe because it carries
-//              the same idempotency key. Sent again after a backoff.
+//   retryable  A temporary failure (408, 425, 429, 502, 503, 504). It does not
+//              prove the work was not done, so the resend is only safe because it
+//              carries the same idempotency key. Sent again after a backoff.
 //   final      The server gave its answer and will give it again (422, 409,
-//              other 4xx). Sending the same request again cannot help.
-//   unknown    No usable answer (timeout, dropped connection, 500, a 2xx that
-//              cannot be read). The work may or may not have happened. Check
-//              status before sending anything.
+//              every other 4xx). Sending the same request again cannot help.
+//   unknown    No usable answer (timeout, dropped connection, 500, any other 5xx,
+//              a 2xx that cannot be read). The work may or may not have happened.
+//              Check status before sending anything.
 
 export type FailureClass = 'retryable' | 'final' | 'unknown'
 
@@ -40,10 +40,10 @@ const RETRYABLE_STATUSES = new Set([408, 425, 429, 502, 503, 504])
 
 export function classifyStatus(status: number): 'ok' | FailureClass {
   if (status >= 200 && status < 300) return 'ok'
-  // A 500 means the server failed part way: treat it like no answer at all.
-  if (status === 500) return 'unknown'
   if (RETRYABLE_STATUSES.has(status)) return 'retryable'
-  return 'final'
+  if (status >= 400 && status < 500) return 'final'
+  // A 500 means the server failed part way, and any other code says even less: treat it like no answer at all.
+  return 'unknown'
 }
 
 /**
