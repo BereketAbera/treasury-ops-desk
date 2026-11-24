@@ -4,7 +4,7 @@ import { buildSeed } from './seed'
 // The mock API's data. It lives in memory and is mirrored to sessionStorage, so
 // it survives a reload and disappears with the tab. Nothing here is sensitive.
 
-export const DB_STORAGE_KEY = 'kc.db.v1'
+export const DB_STORAGE_KEY = 'qc.db.v1'
 
 /** How long the list endpoint lags behind a write. */
 export const READ_LAG_MS = 4_000
@@ -37,6 +37,54 @@ export interface DbState {
 
 let state: DbState | null = null
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isMoney(value: unknown): boolean {
+  return isRecord(value) && typeof value.currency === 'string' && typeof value.amountMinor === 'string' && /^\d+$/.test(value.amountMinor)
+}
+
+function isPayout(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.reference === 'string' &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string' &&
+    typeof value.status === 'string' &&
+    typeof value.routeId === 'string' &&
+    typeof value.rate === 'string' &&
+    isRecord(value.beneficiary) &&
+    isMoney(value.source) &&
+    isMoney(value.target) &&
+    isMoney(value.fee) &&
+    Array.isArray(value.timeline)
+  )
+}
+
+function isBatch(value: unknown): boolean {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.createdAt === 'string' && Array.isArray(value.items) && value.items.every(isRecord)
+}
+
+/** The stored copy may be from an older build or edited by hand. Anything off and the seed is used. */
+export function isDbState(value: unknown): value is DbState {
+  return (
+    isRecord(value) &&
+    value.version === 1 &&
+    Array.isArray(value.payouts) &&
+    value.payouts.every(isPayout) &&
+    isRecord(value.schedules) &&
+    isRecord(value.keys) &&
+    Array.isArray(value.batches) &&
+    value.batches.every(isBatch) &&
+    Array.isArray(value.quotes) &&
+    value.quotes.every(isRecord) &&
+    Number.isInteger(value.nextPayoutNumber) &&
+    Number.isInteger(value.nextBatchNumber)
+  )
+}
+
 function fresh(now: number): DbState {
   return {
     version: 1,
@@ -54,8 +102,8 @@ function read(): DbState | null {
   try {
     const raw = sessionStorage.getItem(DB_STORAGE_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as DbState
-    return parsed.version === 1 && Array.isArray(parsed.payouts) ? parsed : null
+    const parsed: unknown = JSON.parse(raw)
+    return isDbState(parsed) ? parsed : null
   } catch {
     return null
   }
