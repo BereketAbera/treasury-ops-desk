@@ -16,6 +16,16 @@ describe('seed data', () => {
     expect(new Set(seed.map((payout) => payout.reference)).size).toBe(60)
   })
 
+  it('lists every status history in time order, ending at the last update', () => {
+    for (const payout of seed) {
+      const times = payout.timeline.map((event) => Date.parse(event.at))
+      expect(times, payout.id).toEqual([...times].sort((a, b) => a - b))
+      expect(new Set(times).size, payout.id).toBe(times.length)
+      expect(payout.updatedAt, payout.id).toBe(payout.timeline[payout.timeline.length - 1]?.at)
+      expect(Date.parse(payout.createdAt), payout.id).toBe(times[0])
+    }
+  })
+
   it('is the same on every build', () => {
     expect(buildSeed(Date.parse('2026-11-24T12:00:00.000Z'))).toEqual(seed)
   })
@@ -51,13 +61,39 @@ describe('batch CSV', () => {
   it('turns valid lines into items with minor-unit amounts and one key each', () => {
     let next = 0
     const parsed = parseBatchCsv(
-      [HEADER, 'BAT-1001,Adaeze Okonkwo Supplies,Harbour Trust Bank,0123456781,USDC-NGN,2450000.00,', 'BAT-1005,Nile Basin Traders,Lakeshore Commercial Bank,3100456789,USDC-UGX,7450000,'].join('\n'),
+      [HEADER, 'BAT-1001,Adaeze Okonkwo Supplies,Quayside Trust Bank,0123456781,USDC-NGN,2450000.00,', 'BAT-1005,Nile Basin Traders,Lakeshore Commercial Bank,3100456789,USDC-UGX,7450000,'].join('\n'),
       () => `key-${(next += 1)}`,
     )
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
     expect(parsed.rows.map((row) => row.item?.targetAmountMinor)).toEqual(['245000000', '7450000'])
     expect(parsed.rows.map((row) => row.item?.itemKey)).toEqual(['key-1', 'key-2'])
+  })
+
+  it('keeps the line numbers of the file, counting the header and blank lines', () => {
+    const parsed = parseBatchCsv(
+      [
+        HEADER,
+        'BAT-1,Nile Basin Traders,Lakeshore Commercial Bank,3100456789,USDC-UGX,7450000,',
+        '',
+        'BAT-2,Kivu Agro Exports,Thousand Hills Bank,12,USDC-RWF,2380000,',
+        '   ',
+        'BAT-3,Nile Basin Traders,Lakeshore Commercial Bank,3100456789,USDC-UGX,7450000,',
+      ].join('\r\n'),
+    )
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.rows.map((row) => row.line)).toEqual([2, 4, 6])
+    // The line with a problem is left out later. The lines around it keep their numbers.
+    expect(parsed.rows.filter((row) => row.item).map((row) => row.item?.line)).toEqual([2, 6])
+  })
+
+  it('reads a decimal comma in a file as a problem, not as a larger amount', () => {
+    const parsed = parseBatchCsv([HEADER, 'BAT-1,Adaeze Okonkwo Supplies,Quayside Trust Bank,0123456781,USDC-NGN,"1000,50",'].join('\n'))
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.rows[0]?.item).toBeNull()
+    expect(parsed.rows[0]?.problems).toEqual(['Use a point for decimals, for example 1,000.50.'])
   })
 
   it('reports problems per line and builds no item for them', () => {

@@ -52,7 +52,7 @@ export function samplePayout(overrides: Partial<Payout> = {}): Payout {
     reference: 'INV-30001',
     createdAt: '2026-11-24T10:00:00.000Z',
     updatedAt: '2026-11-24T10:00:00.000Z',
-    beneficiary: { name: 'Adaeze Okonkwo Supplies', bank: 'Harbour Trust Bank', account: '0123456781' },
+    beneficiary: { name: 'Adaeze Okonkwo Supplies', bank: 'Quayside Trust Bank', account: '0123456781' },
     routeId: 'USDC-NGN',
     source: { currency: 'USDC', amountMinor: '1548232172' },
     target: { currency: 'NGN', amountMinor: '245000000' },
@@ -71,7 +71,7 @@ export function samplePayout(overrides: Partial<Payout> = {}): Payout {
 
 export const sampleBody = {
   reference: 'INV-30001',
-  beneficiary: { name: 'Adaeze Okonkwo Supplies', bank: 'Harbour Trust Bank', account: '0123456781' },
+  beneficiary: { name: 'Adaeze Okonkwo Supplies', bank: 'Quayside Trust Bank', account: '0123456781' },
   routeId: 'USDC-NGN',
   targetAmountMinor: '245000000',
   quoteId: 'QT-100001',

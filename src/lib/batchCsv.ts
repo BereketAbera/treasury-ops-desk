@@ -6,6 +6,7 @@ export const BATCH_COLUMNS = ['reference', 'beneficiary', 'bank', 'account', 'ro
 export const BATCH_LIMIT = 1000
 
 export interface BatchRow {
+  /** Line number in the uploaded file, counting the header and any blank lines. */
   line: number
   draft: PayoutDraft
   problems: string[]
@@ -39,9 +40,13 @@ export function splitCsvLine(line: string): string[] {
 }
 
 export function parseBatchCsv(text: string, makeKey: () => string = newUuid): BatchParse {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '')
+  // Blank lines are skipped, but every line keeps the number it has in the file.
+  const lines = text
+    .split(/\r?\n/)
+    .map((content, index) => ({ content, number: index + 1 }))
+    .filter((line) => line.content.trim() !== '')
   if (lines.length === 0) return { ok: false, problem: 'The file is empty.' }
-  const header = splitCsvLine(lines[0] ?? '').map((cell) => cell.toLowerCase())
+  const header = splitCsvLine(lines[0]?.content ?? '').map((cell) => cell.toLowerCase())
   const missing = BATCH_COLUMNS.filter((column) => !header.includes(column))
   if (missing.length > 0) {
     return { ok: false, problem: `The first line must name the columns. Missing: ${missing.join(', ')}.` }
@@ -52,8 +57,8 @@ export function parseBatchCsv(text: string, makeKey: () => string = newUuid): Ba
 
   const position = (column: (typeof BATCH_COLUMNS)[number]) => header.indexOf(column)
   const seen = new Set<string>()
-  const rows = body.map((line, index): BatchRow => {
-    const cells = splitCsvLine(line)
+  const rows = body.map((line): BatchRow => {
+    const cells = splitCsvLine(line.content)
     const read = (column: (typeof BATCH_COLUMNS)[number]) => cells[position(column)] ?? ''
     const draft: PayoutDraft = {
       reference: read('reference'),
@@ -70,11 +75,12 @@ export function parseBatchCsv(text: string, makeKey: () => string = newUuid): Ba
     seen.add(draft.reference)
     const valid = problems.length === 0 && checked.route && checked.targetMinor !== undefined
     return {
-      line: index + 1,
+      line: line.number,
       draft,
       problems,
       item: valid
         ? {
+            line: line.number,
             itemKey: makeKey(),
             reference: draft.reference,
             beneficiary: { name: draft.beneficiaryName, bank: draft.bank, account: draft.account },

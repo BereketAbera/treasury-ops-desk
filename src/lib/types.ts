@@ -90,6 +90,8 @@ export interface PayoutListResponse {
 export type BatchItemStatus = 'booked' | 'rejected' | 'outcome_unknown'
 
 export interface BatchItemInput {
+  /** The line of the uploaded file this item came from. The header is line 1. */
+  line: number
   /** One key per item, made in the browser. */
   itemKey: string
   reference: string
@@ -100,7 +102,6 @@ export interface BatchItemInput {
 }
 
 export interface BatchItem extends BatchItemInput {
-  line: number
   target: Money
   status: BatchItemStatus
   payoutId: string | null
@@ -131,6 +132,20 @@ export function countBatch(batch: Pick<Batch, 'items'>): BatchCounts {
     rejected: count('rejected'),
     unknown: count('outcome_unknown'),
   }
+}
+
+/** The batch's own status and its label with counts, for example "9 of 12 booked". */
+export function batchBadge(batch: Pick<Batch, 'items'>): { status: 'booked' | 'failed' | 'partially_completed'; label: string } {
+  const counts = countBatch(batch)
+  const status = counts.booked === counts.total ? 'booked' : counts.booked === 0 ? 'failed' : 'partially_completed'
+  return { status, label: `${counts.booked} of ${counts.total} booked` }
+}
+
+/** "12 instructions: 9 booked, 2 rejected, 1 outcome unknown." */
+export function batchSummary(batch: Pick<Batch, 'items'>): string {
+  const counts = countBatch(batch)
+  const noun = counts.total === 1 ? 'instruction' : 'instructions'
+  return `${counts.total} ${noun}: ${counts.booked} booked, ${counts.rejected} rejected, ${counts.unknown} outcome unknown.`
 }
 
 export type { CurrencyCode, Money }

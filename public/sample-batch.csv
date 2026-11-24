@@ -1,13 +1,13 @@
 reference,beneficiary,bank,account,route,amount,purpose
-BAT-1001,Adaeze Okonkwo Supplies,Harbour Trust Bank,0123456781,USDC-NGN,2450000.00,
+BAT-1001,Adaeze Okonkwo Supplies,Quayside Trust Bank,0123456781,USDC-NGN,2450000.00,
 BAT-1002,Lakeview Freight Ltd,Savanna Union Bank,20045678901,USDC-KES,186500.00,
 BAT-1003,Protea Packaging,Cape Meridian Bank,620044170,USDC-ZAR,48250.75,
-BAT-1004,Volta Cold Chain,Gold Coast Mutual,1400023456789,USDC-GHS,31200.00,
+BAT-1004,Volta Cold Chain,Densu Mutual,1400023456789,USDC-GHS,31200.00,
 BAT-1005,Nile Basin Traders,Lakeshore Commercial Bank,3100456789,USDC-UGX,7450000,
 BAT-1006,Kivu Agro Exports,Thousand Hills Bank,4002115678,USDC-RWF,2380000,
-BAT-1007,Teranga Textiles,Sahel Atlantic Bank,SN08SA0100152000048500003035,USDC-XOF,1650000,
-BAT-1008,Osei and Mensah Logistics,Gold Coast Mutual,1400098765432,USDC-GHS,12800.50,
+BAT-1007,Teranga Textiles,Harmattan Union Bank,SN08SA0100152000048500003035,USDC-XOF,1650000,
+BAT-1008,Osei and Mensah Logistics,Densu Mutual,1400098765432,USDC-GHS,12800.50,
 BAT-1009,Zuri Print Works,Savanna Union Bank,20091234567,USDC-KES,94300.00,
-BAT-1010,Ibadan Steel Fabricators,Harbour Trust Bank,0234567812,USDC-NGN,6800000.00,SUP
-BAT-1011,Baobab Solar Installers,Sahel Atlantic Bank,CI93SA0100152000048500007711,USDC-XOF,920000,
+BAT-1010,Ibadan Steel Fabricators,Quayside Trust Bank,0234567812,USDC-NGN,6800000.00,SUP
+BAT-1011,Kapok Solar Installers,Harmattan Union Bank,CI93SA0100152000048500007711,USDC-XOF,920000,
 BAT-1012,Highveld Seed Company,Cape Meridian Bank,621188300,USDC-ZAR,15990.00,

@@ -5,7 +5,7 @@ import { validateAmount, validateDraft, type PayoutDraft } from '@/lib/validatio
 const good: PayoutDraft = {
   reference: 'INV-20418',
   beneficiaryName: 'Adaeze Okonkwo Supplies',
-  bank: 'Harbour Trust Bank',
+  bank: 'Quayside Trust Bank',
   account: '0123456781',
   routeId: 'USDC-NGN',
   amount: '2,450,000.00',

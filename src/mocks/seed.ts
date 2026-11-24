@@ -15,7 +15,7 @@ const BENEFICIARIES = [
   'Osei and Mensah Logistics',
   'Zuri Print Works',
   'Ibadan Steel Fabricators',
-  'Baobab Solar Installers',
+  'Kapok Solar Installers',
   'Highveld Seed Company',
   'Marula Foods',
   'Kano Grain Merchants',
@@ -38,13 +38,13 @@ const BENEFICIARIES = [
 ]
 
 const BANKS: Record<string, string[]> = {
-  NGN: ['Harbour Trust Bank', 'Delta Crescent Bank'],
+  NGN: ['Quayside Trust Bank', 'Delta Crescent Bank'],
   KES: ['Savanna Union Bank', 'Ridgeline Cooperative Bank'],
   ZAR: ['Cape Meridian Bank', 'Highveld Mutual'],
-  GHS: ['Gold Coast Mutual', 'Volta Savings Bank'],
+  GHS: ['Densu Mutual', 'Kente Savings Bank'],
   UGX: ['Lakeshore Commercial Bank'],
   RWF: ['Thousand Hills Bank'],
-  XOF: ['Sahel Atlantic Bank'],
+  XOF: ['Harmattan Union Bank'],
   USDC: ['Self-custody wallet', 'Custody provider wallet'],
 }
 
@@ -196,15 +196,18 @@ export function buildSeed(now: number): Payout[] {
     const fee = feeFor(source, route.feeBasisPoints)
     const created = now - (index * 43 + 6 + Math.floor(random() * 30)) * MINUTE
     const path = PATHS[entry.status]
-    const timeline: TimelineEvent[] = path.map((status, step) => ({
-      status,
-      at: new Date(created + step * (2 + Math.floor(random() * 6)) * MINUTE).toISOString(),
-    }))
+    // Each step happens some minutes after the one before it, so the history always reads in order.
+    let elapsed = 0
+    const timeline: TimelineEvent[] = path.map((status, step) => {
+      const gap = (2 + Math.floor(random() * 6)) * MINUTE
+      if (step > 0) elapsed += gap
+      return { status, at: new Date(created + elapsed).toISOString() }
+    })
     const last = timeline[timeline.length - 1]
     const failure = entry.failure ? (FAILURES[entry.failure] ?? null) : null
     if (last && failure) last.note = failure.message
     if (last && entry.status === 'outcome_unknown') last.note = 'The rail did not confirm the payment.'
-    const banks = BANKS[route.target] ?? ['Harbour Trust Bank']
+    const banks = BANKS[route.target] ?? ['Quayside Trust Bank']
     const wasSent = path.includes('sent')
     const number = 48260 - index
 
@@ -215,7 +218,7 @@ export function buildSeed(now: number): Payout[] {
       updatedAt: last ? last.at : new Date(created).toISOString(),
       beneficiary: {
         name: BENEFICIARIES[Math.floor(random() * BENEFICIARIES.length)] ?? 'Marula Foods',
-        bank: banks[Math.floor(random() * banks.length)] ?? 'Harbour Trust Bank',
+        bank: banks[Math.floor(random() * banks.length)] ?? 'Quayside Trust Bank',
         account: exampleAccount(route, random),
       },
       routeId: route.id,

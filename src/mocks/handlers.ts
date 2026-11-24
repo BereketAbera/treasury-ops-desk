@@ -61,6 +61,12 @@ const REJECTIONS: Record<string, Failure> = {
     retryable: false,
     nextStep: 'Correct the account and upload the item in a new batch.',
   },
+  duplicate_reference: {
+    code: 'duplicate_reference',
+    message: 'Reference already used.',
+    retryable: false,
+    nextStep: 'A payout with this reference exists. Do not resend. Use a new reference only if this is a different payment.',
+  },
   validation_failed: {
     code: 'validation_failed',
     message: 'The item did not pass validation.',
@@ -174,6 +180,12 @@ function bookItem(batch: Batch, item: BatchItem, now: number): void {
       : { ...REJECTIONS.validation_failed!, message: Object.values(checked.fields)[0] ?? 'The item did not pass validation.' }
     return
   }
+  // Same rule as a single payout: a reference names one payout, in a batch as well.
+  if (referenceTaken(item.reference)) {
+    item.status = 'rejected'
+    item.failure = REJECTIONS.duplicate_reference!
+    return
+  }
   const payout = createPayout(item, checked.route, checked.target, checked.route.rate, {
     idempotencyKey: item.itemKey,
     correlationId: batch.correlationId,
@@ -195,6 +207,15 @@ export const handlers = [
     const now = Date.now()
     advance(now)
     return json(request, { items: visiblePayouts(now), asOf: new Date(now).toISOString() })
+  }),
+
+  // One payout by ID. Unlike the list, this read does not lag behind a write.
+  http.get('/api/payouts/:id', async ({ request, params }) => {
+    await latency()
+    const now = Date.now()
+    advance(now)
+    const payout = db(now).payouts.find((item) => item.id === params.id)
+    return payout ? json(request, payout) : fail(request, 404, 'not_found', 'No payout with this ID.')
   }),
 
   http.post('/api/quotes', async ({ request }) => {
@@ -343,6 +364,11 @@ export const handlers = [
     await latency()
     const key = request.headers.get('Idempotency-Key')
     if (!key) return fail(request, 400, 'idempotency_key_required', 'Send an Idempotency-Key header with every batch.')
+    if (consume('fail-503')) {
+      return fail(request, 503, 'service_unavailable', 'The batch service is temporarily unavailable. Nothing was recorded.', undefined, {
+        'Retry-After': '1',
+      })
+    }
     const body = (await request.json()) as { items?: BatchItemInput[] }
     const items = Array.isArray(body.items) ? body.items : []
     if (items.length === 0 || items.length > 1000) {
@@ -368,11 +394,14 @@ export const handlers = [
       items: [],
     }
     state.nextBatchNumber += 1
+    // Keep the line numbers of the uploaded file, so the result can be read against it.
+    const lines = items.map((input) => input.line)
+    const linesUsable = lines.every((line) => Number.isInteger(line) && line > 0) && new Set(lines).size === lines.length
     items.forEach((input, index) => {
       const route = findRoute(input.routeId)
       const item: BatchItem = {
         ...input,
-        line: index + 1,
+        line: linesUsable ? input.line : index + 1,
         target: { currency: route?.target ?? 'USD', amountMinor: isMinorString(input.targetAmountMinor) ? input.targetAmountMinor : '0' },
         status: 'booked',
         payoutId: null,
@@ -392,6 +421,12 @@ export const handlers = [
     state.batches.push(batch)
     state.keys[key] = { fingerprint: print, batchId: batch.id }
     save()
+
+    // The batch is recorded, but the answer is lost on the way back.
+    if (consume('batch-timeout')) {
+      await delay('infinite')
+      return undefined
+    }
     return json(request, batch, 201)
   }),
 
