@@ -1,36 +1,46 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
-import {
-  DsAmount,
-  DsBanner,
-  DsButton,
-  DsCopyButton,
-  DsCountdown,
-  DsField,
-  DsMoneyInput,
-  DsSelect,
-  DsTextInput,
-  formatMinor,
-} from '@/ds'
-import { decimalsOf, formatMoney } from '@/lib/currencies'
+import { useRoute, useRouter } from 'vue-router'
+import PayoutRateSection from '@/components/payout/PayoutRateSection.vue'
+import PayoutSubmissionStatus from '@/components/payout/PayoutSubmissionStatus.vue'
+import { DsBanner, DsButton, DsCopyButton, DsField, DsMoneyInput, DsSelect, DsTextInput, formatMinor } from '@/ds'
+import { withDuplicateSubmit } from '@/demo'
+import { decimalsOf } from '@/lib/currencies'
 import { api } from '@/lib/http'
 import { newCorrelationId } from '@/lib/ids'
 import { findRoute, PURPOSE_CODES, routeLabel, ROUTES } from '@/lib/routes'
-import { readSession, writeSession } from '@/lib/storage'
+import { isRecord, readSession, writeSession } from '@/lib/storage'
 import { createSubmission } from '@/lib/submission'
 import type { CreatePayoutBody, Quote } from '@/lib/types'
 import { emptyDraft, FIELD_ORDER, validateAmount, validateDraft, type DraftField, type PayoutDraft } from '@/lib/validation'
-import { consume, isActive } from '@/mocks/scenario'
 import { usePayoutsStore } from '@/stores/payouts'
 import { useSimulateStore } from '@/stores/simulate'
 
-const FORM_KEY = 'kc.form.payout.v1'
+const FORM_KEY = 'qc.form.payout.v2'
 
 interface SavedForm {
   idempotencyKey: string
   draft: PayoutDraft
+  /** A request with this key went out and its outcome is not known yet. */
   sent: boolean
+  /** Attempts sent with this key so far. */
+  attempts: number
+}
+
+/** What is in storage may be from an older build or edited by hand. Anything off and the form starts empty. */
+function isSavedForm(value: unknown): value is SavedForm | null {
+  if (value === null) return true
+  if (!isRecord(value) || !isRecord(value.draft)) return false
+  const fields = value.draft
+  return (
+    typeof value.idempotencyKey === 'string' &&
+    value.idempotencyKey.length > 0 &&
+    typeof value.sent === 'boolean' &&
+    typeof value.attempts === 'number' &&
+    Number.isInteger(value.attempts) &&
+    value.attempts >= 0 &&
+    FIELD_ORDER.every((field) => typeof fields[field] === 'string')
+  )
 }
 
 const route = useRoute()
@@ -39,22 +49,29 @@ const payouts = usePayoutsStore()
 const simulate = useSimulateStore()
 
 const wantsPrefill = route.query.prefill === '1'
-const saved = wantsPrefill ? null : readSession<SavedForm | null>(FORM_KEY, null)
+const stored = readSession<SavedForm | null>(FORM_KEY, null, isSavedForm)
+// A submit with no known outcome is never dropped. A link that asks for a new, prefilled form gets
+// the unresolved one instead, with a notice, until its status has been checked.
+const unresolved = stored?.sent === true ? stored : null
+const saved = unresolved ?? (wantsPrefill ? null : stored)
+const askedForNewForm = unresolved !== null && wantsPrefill
 
-const draft = reactive<PayoutDraft>(saved?.draft ?? emptyDraft())
+const draft = reactive<PayoutDraft>({ ...emptyDraft(), ...saved?.draft })
 const submission = createSubmission({
-  client: api,
+  // withDuplicateSubmit is demo only: it sends an accepted submit twice while that scenario is armed.
+  client: withDuplicateSubmit(api),
   idempotencyKey: saved?.idempotencyKey,
   mayHaveBeenSent: saved?.sent === true,
-  takeDuplicate: () => (isActive('duplicate') ? consume('duplicate') : false),
+  attempts: saved?.attempts,
 })
 const state = submission.state
+const showUnresolvedNotice = computed(() => askedForNewForm && ['unknown', 'checking'].includes(state.value.phase))
 
 const touched = reactive<Partial<Record<DraftField, boolean>>>({})
 const attempted = ref(false)
 const serverErrors = ref<Partial<Record<DraftField, string>>>({})
 const summary = ref<HTMLElement | null>(null)
-const statusRegion = ref<HTMLElement | null>(null)
+const statusRegion = ref<{ focus: () => void } | null>(null)
 
 const quote = ref<Quote | null>(null)
 const quoteState = ref<'none' | 'loading' | 'active' | 'expired' | 'failed'>('none')
@@ -156,6 +173,7 @@ function persist(sent?: boolean) {
     idempotencyKey: submission.idempotencyKey.value,
     draft: { ...draft },
     sent: sent ?? ['sending', 'backoff', 'unknown', 'checking', 'retryable'].includes(phase),
+    attempts: submission.attempts.value,
   } satisfies SavedForm)
 }
 
@@ -275,7 +293,7 @@ async function prefill() {
   Object.assign(draft, {
     reference: `INV-${Math.floor(30000 + Math.random() * 60000)}`,
     beneficiaryName: 'Adaeze Okonkwo Supplies',
-    bank: 'Harbour Trust Bank',
+    bank: 'Quayside Trust Bank',
     routeId: 'USDC-NGN',
     account: '0123456781',
     amount: '2,450,000.00',
@@ -290,7 +308,7 @@ onMounted(async () => {
     const query = { ...route.query }
     delete query.prefill
     await router.replace({ query })
-    await prefill()
+    if (!unresolved) await prefill()
   }
 })
 
@@ -317,6 +335,13 @@ const sendingText = computed(() => {
 
     <DsBanner v-if="!simulate.isNormal" tone="warning" :title="`Simulate is set to: ${simulate.scenario.label}`" data-testid="simulate-banner">
       <p>{{ simulate.scenario.watch }}</p>
+    </DsBanner>
+
+    <DsBanner v-if="showUnresolvedNotice" tone="unknown" title="One submit is still unresolved. Check its status first." announce="status" data-testid="unresolved-notice">
+      <p>
+        A new form was asked for, but the earlier submit below has no known outcome. It is kept here, with its idempotency
+        key, until its status is checked. Nothing was discarded and nothing was sent again.
+      </p>
     </DsBanner>
 
     <div class="payout__grid">
@@ -399,49 +424,15 @@ const sendingText = computed(() => {
           </div>
         </fieldset>
 
-        <section class="payout__rate" aria-labelledby="rate-heading">
-          <div class="payout__rate-head">
-            <h2 id="rate-heading">Rate</h2>
-            <DsCountdown
-              v-if="quote && (quoteState === 'active' || quoteState === 'expired')"
-              :expires-at="quote.expiresAt"
-              label="Held for"
-              expired-label="Rate expired"
-              data-testid="rate-countdown"
-              @expired="onRateExpired"
-            />
-          </div>
-
-          <dl v-if="quote && quoteState === 'active'" class="kv" data-testid="quote">
-            <dt>Rate</dt>
-            <dd class="num">1 {{ quote.source.currency }} = {{ quote.rate }} {{ quote.target.currency }}</dd>
-            <dt>Beneficiary receives</dt>
-            <dd><DsAmount :minor="quote.target.amountMinor" :currency="quote.target.currency" :decimals="decimalsOf(quote.target.currency)" /></dd>
-            <dt>You send</dt>
-            <dd><DsAmount :minor="quote.source.amountMinor" :currency="quote.source.currency" :decimals="decimalsOf(quote.source.currency)" /></dd>
-            <dt>Fee</dt>
-            <dd><DsAmount :minor="quote.fee.amountMinor" :currency="quote.fee.currency" :decimals="decimalsOf(quote.fee.currency)" /></dd>
-          </dl>
-          <p v-else-if="quoteState === 'expired'" class="payout__rate-note payout__rate-note--warn" role="alert" data-testid="rate-expired">
-            The rate expired, so Submit is locked. Refresh the rate to continue.
-          </p>
-          <p v-else-if="quoteState === 'failed' && quoteError" class="payout__rate-note payout__rate-note--warn" role="alert">
-            {{ quoteError.message }} Correlation ID <span class="mono">{{ quoteError.correlationId }}</span>
-          </p>
-          <p v-else class="payout__rate-note muted">Choose a route and enter an amount, then get a rate. A rate is held for 30 seconds.</p>
-
-          <DsButton
-            id="payout-get-rate"
-            :variant="quoteState === 'active' ? 'secondary' : 'primary'"
-            icon="refresh"
-            :loading="quoteState === 'loading'"
-            :disabled="formLocked"
-            data-testid="get-rate"
-            @click="getRate"
-          >
-            {{ quoteState === 'none' || quoteState === 'loading' ? 'Get rate' : 'Refresh rate' }}
-          </DsButton>
-        </section>
+        <PayoutRateSection
+          :quote="quote"
+          :quote-state="quoteState"
+          :quote-error="quoteError"
+          :locked="formLocked"
+          :accepted="state.phase === 'accepted' ? state.payout : null"
+          @get-rate="getRate"
+          @expired="onRateExpired"
+        />
 
         <div class="payout__submit">
           <DsButton type="submit" variant="primary" :disabled="submitBlocked && !submission.busy.value" :loading="submission.busy.value" data-testid="submit-payout">
@@ -450,107 +441,22 @@ const sendingText = computed(() => {
           <p v-if="quoteState === 'expired'" class="muted">Locked: the rate expired.</p>
           <p v-else-if="state.phase === 'accepted'" class="muted">Locked: this payout was accepted.</p>
           <p v-else-if="state.phase === 'unknown' || state.phase === 'not-received' || state.phase === 'retryable'" class="muted">
-            Locked until the submit above is resolved.
+            Locked until this submit is resolved.
           </p>
           <p v-else class="muted">Pressing Submit twice sends one request.</p>
         </div>
       </form>
 
       <aside class="payout__side" aria-label="Submission">
-        <div ref="statusRegion" class="payout__status" tabindex="-1" data-testid="submission-status" :data-phase="state.phase">
-          <p class="ds-visually-hidden" role="status">{{ sendingText }}</p>
-
-          <DsBanner v-if="state.phase === 'idle'" tone="neutral" title="Nothing sent yet">
-            <p>The result of your submit appears here: accepted, failed with a reason, or unknown.</p>
-          </DsBanner>
-
-          <DsBanner v-else-if="state.phase === 'sending' || state.phase === 'backoff' || state.phase === 'checking'" tone="info" :title="state.phase === 'checking' ? 'Checking status' : 'Sending'">
-            <p data-testid="attempt-line">{{ sendingText }}</p>
-            <p class="muted">Up to 3 attempts go out on their own, with a longer wait each time. Every attempt carries the same idempotency key.</p>
-          </DsBanner>
-
-          <DsBanner v-else-if="state.phase === 'accepted' && state.how === 'replay'" tone="success" title="Already received, not sent twice" announce="status">
-            <p>
-              The same request went out twice with one idempotency key. The API answered the second one with the first
-              result, marked as a replay, so one payout exists: <span class="mono">{{ state.payout.id }}</span
-              >.
-            </p>
-            <template #actions>
-              <RouterLink class="ds-button ds-button--primary ds-button--md" :to="{ path: '/', query: { selected: state.payout.id } }">View in the instruction table</RouterLink>
-              <DsButton @click="startNew">New payout</DsButton>
-            </template>
-          </DsBanner>
-
-          <DsBanner v-else-if="state.phase === 'accepted' && state.how === 'status-check'" tone="success" title="Received" announce="status">
-            <p>
-              The status check found payout <span class="mono">{{ state.payout.id }}</span> under this idempotency key. It
-              was recorded before the answer was lost. Nothing needs resending.
-            </p>
-            <template #actions>
-              <RouterLink class="ds-button ds-button--primary ds-button--md" :to="{ path: '/', query: { selected: state.payout.id } }">View in the instruction table</RouterLink>
-              <DsButton @click="startNew">New payout</DsButton>
-            </template>
-          </DsBanner>
-
-          <DsBanner v-else-if="state.phase === 'accepted'" tone="success" title="Payout accepted" announce="status">
-            <p>
-              <span class="mono">{{ state.payout.id }}</span> for {{ formatMoney(state.payout.target) }} to
-              {{ state.payout.beneficiary.name }}<template v-if="state.attempts > 1">, on attempt {{ state.attempts }}</template>.
-            </p>
-            <p>It shows in the instruction table as awaiting confirmation until the list catches up, a few seconds from now.</p>
-            <template #actions>
-              <RouterLink class="ds-button ds-button--primary ds-button--md" :to="{ path: '/', query: { selected: state.payout.id } }">View in the instruction table</RouterLink>
-              <DsButton @click="startNew">New payout</DsButton>
-            </template>
-          </DsBanner>
-
-          <DsBanner v-else-if="state.phase === 'retryable'" tone="warning" :title="`Not sent: the service answered ${state.status}`" announce="alert">
-            <p>{{ state.attempts }} attempts failed. {{ state.message }}</p>
-            <p>A retry is safe. It carries the same idempotency key, so the payout cannot be made twice.</p>
-            <p class="payout__cid">
-              Correlation ID <span class="mono">{{ state.correlationId }}</span>
-              <DsCopyButton :value="state.correlationId" label="Copy correlation ID" />
-            </p>
-            <template #actions>
-              <DsButton variant="primary" data-testid="retry-same-key" @click="submission.retry()">Retry with the same key</DsButton>
-            </template>
-          </DsBanner>
-
-          <DsBanner v-else-if="state.phase === 'final'" tone="danger" :title="`Not accepted (${state.status})`" announce="alert">
-            <p>{{ state.message }}</p>
-            <p>Sending the same request again will not help. Correct the form, then submit.</p>
-            <p class="payout__cid">
-              Correlation ID <span class="mono">{{ state.correlationId }}</span>
-              <DsCopyButton :value="state.correlationId" label="Copy correlation ID" />
-            </p>
-          </DsBanner>
-
-          <DsBanner v-else-if="state.phase === 'unknown'" tone="unknown" title="We could not confirm this payout" announce="alert">
-            <p v-if="state.reason === 'reload'">This page was reloaded while a submit was unresolved. The payout may or may not have been received.</p>
-            <p v-else-if="state.reason === 'timeout'">No answer arrived within 4 seconds. The payout may or may not have been received.</p>
-            <p v-else>The connection failed before an answer arrived. The payout may or may not have been received.</p>
-            <p><strong>Do not resend. Check status.</strong> The check looks the payout up by its idempotency key.</p>
-            <p v-if="state.checkFailed">The status check did not get an answer either. Try the check again.</p>
-            <p v-if="state.correlationId" class="payout__cid">
-              Correlation ID <span class="mono">{{ state.correlationId }}</span>
-              <DsCopyButton :value="state.correlationId" label="Copy correlation ID" />
-            </p>
-            <template #actions>
-              <DsButton variant="primary" data-testid="check-status" @click="submission.checkStatus()">Check status</DsButton>
-            </template>
-          </DsBanner>
-
-          <DsBanner v-else-if="state.phase === 'not-received'" tone="warning" title="Not received, safe to resend" announce="alert">
-            <p>The API has no payout under this idempotency key, so the request never arrived. Resending cannot pay twice: it carries the same key.</p>
-            <p class="payout__cid">
-              Correlation ID <span class="mono">{{ state.correlationId }}</span>
-              <DsCopyButton :value="state.correlationId" label="Copy correlation ID" />
-            </p>
-            <template #actions>
-              <DsButton variant="primary" data-testid="resend" @click="resend">Resend with the same key</DsButton>
-            </template>
-          </DsBanner>
-        </div>
+        <PayoutSubmissionStatus
+          ref="statusRegion"
+          :state="state"
+          :sending-text="sendingText"
+          @retry="submission.retry()"
+          @check="submission.checkStatus()"
+          @resend="resend"
+          @start-new="startNew"
+        />
 
         <div class="card payout__request">
           <h2>This request</h2>
@@ -715,8 +621,15 @@ const sendingText = computed(() => {
     font-size: var(--font-size-sm);
 
     .mono {
+      white-space: normal;
       overflow-wrap: anywhere;
     }
+  }
+
+  &__rate-used {
+    color: var(--color-success-text);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-bold);
   }
 }
 
