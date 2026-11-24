@@ -5,6 +5,7 @@ import BatchArrival from '@/components/BatchArrival.vue'
 import SubmissionStatus from '@/components/SubmissionStatus.vue'
 import { DsAmount, DsBanner, DsButton, DsCopyButton, DsStatusBadge, type StatusName } from '@/ds'
 import { decimalsOf } from '@/lib/currencies'
+import { focusInView } from '@/lib/focus'
 import { formatDateTime, plural } from '@/lib/format'
 import { api } from '@/lib/http'
 import { newCorrelationId, newUuid } from '@/lib/ids'
@@ -69,7 +70,7 @@ const badge = computed<{ status: StatusName; label: string }>(() => batchBadge(b
 // focus goes to the page heading instead of falling back to the top of the document.
 async function focusHeading() {
   await nextTick()
-  document.getElementById('page-title')?.focus()
+  focusInView(document.getElementById('page-title'))
 }
 
 async function retryRejected() {
@@ -243,10 +244,12 @@ async function checkItem(item: BatchItem) {
                 <td class="result__name" data-label="Beneficiary">{{ item.beneficiary.name }}</td>
                 <td class="right" data-label="Amount"><DsAmount :minor="item.target.amountMinor" :currency="item.target.currency" :decimals="decimalsOf(item.target.currency)" /></td>
                 <td class="plain-table__wide" data-label="Reason">
-                  <DsStatusBadge status="rejected" :label="item.failure?.retryable ? 'Rejected, can retry' : 'Rejected, final'" />
+                  <DsStatusBadge status="rejected" :label="!item.failure?.retryable ? 'Rejected, final' : retry.unresolved.value ? 'Rejected, retry sent' : 'Rejected, can retry'" />
                   <span class="result__reason">{{ item.failure?.message }} <code>{{ item.failure?.code }}</code></span>
                 </td>
-                <td class="plain-table__wide" data-label="Next step">{{ item.failure?.nextStep }}</td>
+                <td class="plain-table__wide" data-label="Next step">
+                  {{ item.failure?.retryable && retry.unresolved.value ? 'Check the status of the retry first.' : item.failure?.nextStep }}
+                </td>
               </tr>
             </tbody>
           </table>

@@ -255,7 +255,7 @@ test.describe('batch submit with an unknown outcome', () => {
     { width: 1440, height: 900 },
     { width: 390, height: 844 },
   ]) {
-    test(`at ${viewport.width} by ${viewport.height} the notice is focused and in view, with the correlation ID and Check status`, async ({ page }) => {
+    test(`at ${viewport.width} by ${viewport.height} the notice is focused and in view, with the correlation ID and Check status`, { tag: viewport.width === 390 ? '@smoke' : [] }, async ({ page }) => {
       await page.setViewportSize(viewport)
       await submitUnknownBatch(page, 'batch-timeout')
       const status = page.getByTestId('submission-status')
@@ -433,7 +433,7 @@ test.describe('batch retry with an unknown outcome', () => {
     await expectInView(page, status)
     await expect(status).toContainText('Correlation ID cor_')
     await expect(page.getByTestId('retry-rejected')).toBeDisabled()
-    await expect(page.getByTestId('group-rejected')).not.toContainText('no money moved')
+    for (const text of ['no money moved', 'nothing was booked', 'can retry']) await expect(page.getByTestId('group-rejected')).not.toContainText(text)
     expect(retries[0]?.headers()['idempotency-key']).toBeTruthy()
 
     await page.reload()
