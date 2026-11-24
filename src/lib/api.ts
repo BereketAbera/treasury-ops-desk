@@ -9,7 +9,7 @@ export interface ApiErrorBody {
 }
 
 export type ApiResult<T> =
-  | { kind: 'ok'; status: number; data: T; replayed: boolean; correlationId: string }
+  | { kind: 'ok'; status: number; data: T; replayed: boolean; correlationId: string; /** The attempt this answer belongs to. */ attempt: number }
   | { kind: 'error'; status: number; error: ApiErrorBody; failure: FailureClass; correlationId: string }
   | { kind: 'timeout'; correlationId: string; timeoutMs: number }
   | { kind: 'network'; correlationId: string; message: string }
@@ -51,6 +51,18 @@ export interface ApiClientDeps {
 }
 
 export const DEFAULT_TIMEOUT_MS = 4_000
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  try {
+    return (await response.json()) as unknown
+  } catch {
+    return null
+  }
+}
 
 let sequence = 0
 
@@ -107,33 +119,35 @@ export function createApiClient(deps: ApiClientDeps = {}) {
         signal: controller.signal,
       })
       const isJson = (response.headers.get('Content-Type') ?? '').includes('application/json')
-      const payload: unknown = isJson ? await response.json() : null
+      const payload = isJson ? await readJson(response) : null
       const replayed = response.headers.get('Idempotent-Replayed') === 'true'
       finish({ status: response.status, replayed })
 
-      if (!isJson) {
-        return {
-          kind: 'error',
-          status: response.status,
-          failure: 'final',
-          correlationId,
-          error: { code: 'not_json', message: 'The API answered with something that is not JSON.', correlationId },
-        }
-      }
+      // The status decides the class first. A gateway's HTML 504 is still a 504.
       const outcome = classifyStatus(response.status)
       if (outcome === 'ok') {
-        return { kind: 'ok', status: response.status, data: payload as T, replayed, correlationId }
+        if (payload === null) {
+          // A success that cannot be read says nothing about what was done: check before sending again.
+          return {
+            kind: 'error',
+            status: response.status,
+            failure: 'unknown',
+            correlationId,
+            error: { code: 'not_json', message: 'The API answered with something that is not JSON.', correlationId },
+          }
+        }
+        return { kind: 'ok', status: response.status, data: payload as T, replayed, correlationId, attempt }
       }
-      const body = (payload ?? {}) as Partial<ApiErrorBody>
+      const body = (isRecord(payload) ? payload : {}) as Partial<ApiErrorBody>
       return {
         kind: 'error',
         status: response.status,
         failure: outcome,
         correlationId,
         error: {
-          code: body.code ?? 'error',
-          message: body.message ?? `Request failed with status ${response.status}.`,
-          fields: body.fields,
+          code: typeof body.code === 'string' ? body.code : payload === null ? 'not_json' : 'error',
+          message: typeof body.message === 'string' ? body.message : `Request failed with status ${response.status}.`,
+          fields: isRecord(body.fields) ? (body.fields as Record<string, string>) : undefined,
           correlationId,
         },
       }
@@ -185,9 +199,9 @@ export interface RetryOutcome<T> {
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 /**
- * Sends one logical operation, retrying only when the server said it did not do
- * the work. Every attempt carries the same correlation ID and, when given, the
- * same idempotency key. A timeout is returned at once: the caller must check
+ * Sends one logical operation, retrying only on a temporary failure. Every
+ * attempt carries the same correlation ID and, when given, the same
+ * idempotency key, which is what makes the resend safe. A timeout is returned at once: the caller must check
  * status before sending again.
  */
 export async function sendWithRetry<T>(
@@ -208,7 +222,9 @@ export async function sendWithRetry<T>(
     made += 1
     const failure = failureOf(result)
     if (failure === null || result.kind !== 'error' || !shouldRetry(failure, made, policy)) {
-      return { result, attempts: first + made - 1 }
+      // The answer names its own attempt, so a count can never fall behind what was really sent.
+      const sent = first + made - 1
+      return { result, attempts: result.kind === 'ok' ? Math.max(sent, result.attempt) : sent }
     }
     const delayMs = backoffDelay(made, policy, hooks.random)
     hooks.onBackoff?.({ failedAttempt: attempt, nextAttempt: attempt + 1, delayMs, status: result.status })

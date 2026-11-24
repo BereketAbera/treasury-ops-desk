@@ -51,6 +51,38 @@ describe('api client', () => {
     })
   })
 
+  it('classes by status before looking at the body: a gateway 504 with an HTML page is retryable, not final', async () => {
+    const { fetch } = fakeFetch([
+      { status: 504, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+      { status: 502, headers: { 'Content-Type': 'text/html' } },
+      { status: 404, headers: { 'Content-Type': 'text/html' } },
+      { status: 500, headers: { 'Content-Type': 'text/plain' } },
+    ])
+    const client = createApiClient({ fetch })
+    expect(await client.request({ path: '/a' })).toMatchObject({ kind: 'error', status: 504, failure: 'retryable', error: { code: 'not_json' } })
+    expect(await client.request({ path: '/b' })).toMatchObject({ kind: 'error', status: 502, failure: 'retryable' })
+    expect(await client.request({ path: '/c' })).toMatchObject({ kind: 'error', status: 404, failure: 'final' })
+    expect(await client.request({ path: '/d' })).toMatchObject({ kind: 'error', status: 500, failure: 'unknown' })
+  })
+
+  it('treats a 2xx that is not JSON as an unknown outcome', async () => {
+    const { fetch } = fakeFetch([{ status: 200, headers: { 'Content-Type': 'text/html' } }])
+    expect(await createApiClient({ fetch }).request({ method: 'POST', path: '/api/payouts', body: sampleBody })).toMatchObject({
+      kind: 'error',
+      status: 200,
+      failure: 'unknown',
+      error: { code: 'not_json' },
+    })
+  })
+
+  it('sendWithRetry sends a non-JSON 504 again with the same key and stops at the first success', async () => {
+    const { fetch, calls } = fakeFetch([{ status: 504, headers: { 'Content-Type': 'text/html' } }, { status: 201, body: samplePayout() }])
+    const outcome = await sendWithRetry(createApiClient({ fetch }), { method: 'POST', path: '/api/payouts', body: sampleBody, idempotencyKey: 'key-1' }, policy, { sleep: noSleep })
+    expect(outcome.attempts).toBe(2)
+    expect(outcome.result.kind).toBe('ok')
+    expect(calls.map((call) => call.headers['Idempotency-Key'])).toEqual(['key-1', 'key-1'])
+  })
+
   it('returns a timeout when no answer arrives in time', async () => {
     vi.useFakeTimers()
     const { fetch } = fakeFetch([{ status: 0, hang: true }])

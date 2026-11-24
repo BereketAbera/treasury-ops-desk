@@ -1,11 +1,13 @@
 // What to do after an answer, or after no answer.
 //
-//   retryable  The server said it did not do the work (503 and similar). Send
-//              again with the same idempotency key, after a backoff.
+//   retryable  A temporary failure (503, 429, 502, 504). It does not prove the
+//              work was not done, so the resend is only safe because it carries
+//              the same idempotency key. Sent again after a backoff.
 //   final      The server gave its answer and will give it again (422, 409,
 //              other 4xx). Sending the same request again cannot help.
-//   unknown    No answer arrived (timeout, dropped connection). The work may
-//              or may not have happened. Check status before sending anything.
+//   unknown    No usable answer (timeout, dropped connection, 500, a 2xx that
+//              cannot be read). The work may or may not have happened. Check
+//              status before sending anything.
 
 export type FailureClass = 'retryable' | 'final' | 'unknown'
 
@@ -34,7 +36,7 @@ export const POLL_POLICY: RetryPolicy = {
   jitter: 0,
 }
 
-const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
+const RETRYABLE_STATUSES = new Set([408, 425, 429, 502, 503, 504])
 
 export function classifyStatus(status: number): 'ok' | FailureClass {
   if (status >= 200 && status < 300) return 'ok'
