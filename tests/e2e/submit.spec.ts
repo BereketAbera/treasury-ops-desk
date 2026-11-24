@@ -5,7 +5,7 @@ const keysOf = (requests: { headers(): Record<string, string> }[]) => requests.m
 const correlationsOf = (requests: { headers(): Record<string, string> }[]) => requests.map((request) => request.headers()['x-correlation-id'])
 
 test.describe('payout form: submit', () => {
-  test('happy path: accepted, shown at once as awaiting confirmation, settled by polling, kept after reload', async ({ page }) => {
+  test('happy path: accepted, shown at once as awaiting confirmation, settled by polling, kept after reload', { tag: '@smoke' }, async ({ page }) => {
     const posts = record(page, 'POST', '/api/payouts')
     await openPrefilledForm(page)
     const key = await page.getByTestId('idempotency-key').textContent()
@@ -15,6 +15,10 @@ test.describe('payout form: submit', () => {
     const status = page.getByTestId('submission-status')
     await expect(status).toContainText('Payout accepted')
     await expect(status).toContainText('2,450,000.00 NGN')
+    // Once accepted, the countdown gives way to the rate the payout was accepted at.
+    await expect(page.getByTestId('rate-countdown')).toHaveCount(0)
+    await expect(page.getByTestId('rate-used')).toHaveText('Accepted at this rate')
+    await expect(page.getByTestId('quote')).toContainText('1 USDC = 1,582.45 NGN')
     expect(posts).toHaveLength(1)
     expect(posts[0]?.headers()['idempotency-key']).toBe(key)
     expect(posts[0]?.headers()['x-correlation-id']).toMatch(/^cor_[0-9a-f]{20}$/)
@@ -70,6 +74,7 @@ test.describe('payout form: submit', () => {
     await expect(status).toContainText('Already received, not sent twice')
     await expect(status).toContainText('PO-48261')
     expect(posts).toHaveLength(2)
+    await expect(page.getByTestId('attempts')).toHaveText('2')
     expect(new Set(keysOf(posts)).size).toBe(1)
     expect((await posts[1]?.response())?.headers()['idempotent-replayed']).toBe('true')
     expect((await posts[0]?.response())?.headers()['idempotent-replayed']).toBeUndefined()
@@ -116,7 +121,7 @@ test.describe('payout form: submit', () => {
     await expect(rows.first()).toContainText(correlations[3] ?? 'missing')
   })
 
-  test('timeout: outcome unknown, no blind resend, status check finds the payout', async ({ page }) => {
+  test('timeout: outcome unknown, no blind resend, status check finds the payout', { tag: '@smoke' }, async ({ page }) => {
     const posts = record(page, 'POST', '/api/payouts')
     const checks = record(page, 'GET', /^\/api\/idempotency-keys\//)
     await openPrefilledForm(page, 'timeout-received')
@@ -167,12 +172,44 @@ test.describe('payout form: submit', () => {
     await expect(page.getByTestId('submission-status')).toContainText('We could not confirm this payout')
 
     await page.reload()
-    await expect(page.getByTestId('submission-status')).toContainText('This page was reloaded while a submit was unresolved')
+    await expect(page.getByTestId('submission-status')).toContainText('This form was left while a submit was unresolved')
     await expect(page.getByTestId('idempotency-key')).toHaveText(key ?? '')
+    // The attempt already sent is still counted after the reload.
+    await expect(page.getByTestId('attempts')).toHaveText('1')
     await expect(page.getByLabel('Your reference')).toHaveValue(/^INV-\d{5}$/)
     await page.getByTestId('check-status').click()
     await expect(page.getByTestId('submission-status')).toContainText('Received')
     expect(posts).toHaveLength(1)
+  })
+
+  test('an unresolved submit is kept when a new prefilled form is asked for, and a resend continues the attempt count', async ({ page }) => {
+    const posts = record(page, 'POST', '/api/payouts')
+    await openPrefilledForm(page, 'timeout-lost')
+    const key = await page.getByTestId('idempotency-key').textContent()
+    const reference = await page.getByLabel('Your reference').inputValue()
+    await page.getByTestId('submit-payout').click()
+    const status = page.getByTestId('submission-status')
+    await expect(status).toContainText('We could not confirm this payout')
+    await expect(page.getByText('Locked until this submit is resolved.')).toBeVisible()
+
+    // The links on the home page and in the Simulate panel all ask for a new prefilled form.
+    await page.goto('/payouts/new?prefill=1')
+    await expect(page.getByTestId('unresolved-notice')).toContainText('One submit is still unresolved. Check its status first.')
+    await expect(status).toContainText('We could not confirm this payout')
+    await expect(page.getByTestId('idempotency-key')).toHaveText(key ?? '')
+    await expect(page.getByLabel('Your reference')).toHaveValue(reference)
+    await expect(page.getByTestId('attempts')).toHaveText('1')
+    await expect(page.getByTestId('submit-payout')).toBeDisabled()
+    await expect(page).toHaveURL(/\/payouts\/new$/)
+
+    await page.getByTestId('check-status').click()
+    await expect(status).toContainText('Not received, safe to resend')
+    await expect(page.getByTestId('unresolved-notice')).toHaveCount(0)
+    await page.getByTestId('resend').click()
+    await expect(status).toContainText('Payout accepted')
+    await expect(page.getByTestId('attempts')).toHaveText('2')
+    expect(new Set(keysOf(posts)).size).toBe(1)
+    expect(posts[posts.length - 1]?.headers()['x-attempt']).toBe('2')
   })
 
   test('an expired rate locks Submit until the rate is refreshed', async ({ page }) => {
@@ -262,6 +299,47 @@ test.describe('payout form: hard validation', () => {
     await expect(page.getByLabel('Wallet address')).toBeVisible()
   })
 
+  test('a comma is a thousands separator in a valid position and never a decimal point', async ({ page }) => {
+    const quotes = record(page, 'POST', '/api/quotes')
+    await open(page, '/payouts/new')
+    await page.getByLabel('Route').selectOption('USDC-NGN')
+    const amount = page.getByLabel('Amount the beneficiary receives')
+    const error = page.locator('#payout-amount-error')
+
+    // 1000,50 used to become 100,050.00, a hundred times what was typed.
+    await amount.fill('1000,50')
+    await amount.blur()
+    await expect(error).toHaveText('Use a point for decimals, for example 1,000.50.')
+    await expect(amount).toHaveValue('1000,50')
+    await page.getByTestId('get-rate').click()
+    await expect(page.getByTestId('quote')).toHaveCount(0)
+    expect(quotes).toHaveLength(0)
+
+    await amount.fill('1,000.50')
+    await amount.blur()
+    await expect(error).toHaveCount(0)
+    await expect(amount).toHaveValue('1,000.50')
+    await page.getByTestId('get-rate').click()
+    await expect(page.getByTestId('quote')).toContainText('1,000.50')
+    expect(quotes[0]?.postDataJSON().targetAmountMinor).toBe('100050')
+
+    await amount.fill('.50')
+    await amount.blur()
+    await expect(error).toHaveText('The minimum on this route is 1,000.00 NGN.')
+    await amount.fill('abc')
+    await amount.blur()
+    await expect(error).toHaveText('Enter the amount as digits, for example 1250.50.')
+
+    await page.getByLabel('Route').selectOption('USDC-XOF')
+    await expect(error).toHaveText('Enter the amount as digits, for example 1250.')
+    await amount.fill('1650000,50')
+    await amount.blur()
+    await expect(error).toHaveText('Use commas only between groups of three digits, for example 1,000,000. XOF has no decimals.')
+    await amount.fill('1,650,000')
+    await amount.blur()
+    await expect(error).toHaveCount(0)
+  })
+
   test('limits, account format and the purpose code threshold are enforced', async ({ page }) => {
     await open(page, '/payouts/new')
     await page.getByLabel('Route').selectOption('USDC-NGN')
@@ -339,7 +417,11 @@ test.describe('mock API contract', () => {
       const changed = await call('/api/payouts', { ...payout, targetAmountMinor: '18650001' }, 'key-a')
       const sameReference = await call('/api/payouts', payout, 'key-b')
       const floatAmount = await call('/api/payouts', { ...payout, reference: 'CONTRACT-2', targetAmountMinor: '186500.00' }, 'key-c')
-      return { quote, noKey, first, again, changed, sameReference, floatAmount }
+      const item = { line: 2, itemKey: 'item-1', reference: 'CONTRACT-1', beneficiary: payout.beneficiary, routeId: 'USDC-KES', targetAmountMinor: '18650000', purposeCode: null }
+      const batch = await call('/api/batches', { items: [item, { ...item, line: 7, itemKey: 'item-2', reference: 'CONTRACT-3' }] }, 'key-d')
+      const one = await fetch(`/api/payouts/${first.body.id}`).then(async (response) => ({ status: response.status, body: await response.json() }))
+      const none = await fetch('/api/payouts/PO-1').then((response) => response.status)
+      return { quote, noKey, first, again, changed, sameReference, floatAmount, batch, one, none }
     })
     expect(result.quote.status).toBe(201)
     expect(result.quote.body.source.amountMinor).toMatch(/^\d+$/)
@@ -350,5 +432,12 @@ test.describe('mock API contract', () => {
     expect(result.changed).toMatchObject({ status: 409, body: { code: 'idempotency_key_reused' } })
     expect(result.sameReference).toMatchObject({ status: 409, body: { code: 'duplicate_reference', correlationId: 'cor_contract' } })
     expect(result.floatAmount).toMatchObject({ status: 422, body: { code: 'validation_failed' } })
+    // A batch item with a reference that exists is rejected for good. The other item is booked and keeps its line number.
+    expect(result.batch.status).toBe(201)
+    expect(result.batch.body.items[0]).toMatchObject({ line: 2, status: 'rejected', payoutId: null, failure: { code: 'duplicate_reference', message: 'Reference already used.', retryable: false } })
+    expect(result.batch.body.items[1]).toMatchObject({ line: 7, status: 'booked' })
+    // One payout can be read by ID without the list's lag.
+    expect(result.one).toMatchObject({ status: 200, body: { reference: 'CONTRACT-1' } })
+    expect(result.none).toBe(404)
   })
 })

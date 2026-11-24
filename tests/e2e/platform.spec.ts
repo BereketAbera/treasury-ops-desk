@@ -15,12 +15,55 @@ test.describe('headers, storage and Storybook', () => {
     expect(headers['referrer-policy']).toBe('no-referrer')
   })
 
+  test('the HTML and the worker script are always revalidated, and hashed assets are cached for good', async ({ page, request }) => {
+    const html = await request.get('/')
+    expect(html.headers()['cache-control']).toMatch(/no-cache|max-age=0/)
+    const deep = await request.get('/payouts/new')
+    expect(deep.headers()['cache-control']).toMatch(/no-cache|max-age=0/)
+    const worker = await request.get('/mockServiceWorker.js')
+    expect(worker.status()).toBe(200)
+    expect(worker.headers()['cache-control']).toMatch(/no-cache|max-age=0/)
+
+    await page.goto('/')
+    const assets = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLScriptElement | HTMLLinkElement>('script[src], link[rel=stylesheet]')).map((node) => ('src' in node ? node.src : node.href)))
+    expect(assets.length).toBeGreaterThan(0)
+    for (const url of assets) {
+      expect(new URL(url).pathname).toMatch(/^\/assets\/.+-[\w-]{8,}\.(js|css)$/)
+      const asset = await request.get(url)
+      expect(asset.status()).toBe(200)
+      expect(asset.headers()['cache-control'], url).toContain('immutable')
+      expect(asset.headers()['cache-control'], url).toContain('max-age=31536000')
+    }
+  })
+
+  test('values edited by hand in sessionStorage do not break a page', async ({ page }) => {
+    await open(page, '/')
+    await expect(page.getByTestId('row-count')).toContainText('Showing 60')
+    await page.evaluate(() => {
+      sessionStorage.setItem('qc.form.payout.v2', JSON.stringify({ draft: {} }))
+      sessionStorage.setItem('qc.requestlog.v2', JSON.stringify({ not: 'a log' }))
+      sessionStorage.setItem('qc.prefs.v1', JSON.stringify(['compact']))
+      sessionStorage.setItem('qc.scenario.v1', '"polling-outage"')
+      sessionStorage.setItem('qc.db.v1', JSON.stringify({ version: 1, payouts: 'none' }))
+    })
+    await page.reload()
+    await expect(page.getByTestId('row-count')).toHaveText('Showing 60 of 60 instructions')
+    await page.getByRole('button', { name: 'Request log' }).first().click()
+    await expect(page.getByRole('dialog', { name: 'Request log' })).toContainText('No requests yet')
+    await page.keyboard.press('Escape')
+    await open(page, '/payouts/new')
+    await expect(page.getByLabel('Your reference')).toHaveValue('')
+    await expect(page.getByTestId('submission-status')).toContainText('Nothing sent yet')
+    await open(page, '/batches')
+    await expect(page.getByTestId('batches-empty')).toBeVisible()
+  })
+
   test('state is kept in sessionStorage only and nothing is written to localStorage', async ({ page }) => {
     await open(page, '/')
     await expect(page.getByTestId('row-count')).toContainText('Showing 60')
     const storage = await page.evaluate(() => ({ local: localStorage.length, session: Object.keys(sessionStorage) }))
     expect(storage.local).toBe(0)
-    expect(storage.session).toContain('kc.db.v1')
+    expect(storage.session).toContain('qc.db.v1')
   })
 
   test('requests are visible to the browser with their headers', async ({ page }) => {
@@ -40,6 +83,13 @@ test.describe('headers, storage and Storybook', () => {
     await expect(page).toHaveTitle(/Storybook/)
     await expect(page.locator('#storybook-explorer-tree')).toContainText('Components')
     await expect(page.locator('#storybook-explorer-tree')).toContainText('Foundations')
+    // One group per component, each with a plain name.
+    const tree = page.locator('#storybook-explorer-tree')
+    for (const name of ['Amount', 'Banner', 'Button', 'CopyButton', 'Countdown', 'DataTable', 'Dialog', 'Drawer', 'Field', 'Icon', 'MoneyInput', 'Rate', 'Segmented', 'Select', 'StatusBadge', 'TextInput']) {
+      await expect(tree.getByRole('button', { name, exact: true }).or(tree.getByRole('link', { name, exact: true })).first(), name).toBeVisible()
+    }
+    await expect(tree).not.toContainText('Field, TextInput')
+    await expect(tree).not.toContainText('Drawer and Dialog')
   })
 
   test('a story renders on its own page', async ({ page }) => {

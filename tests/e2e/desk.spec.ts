@@ -1,7 +1,64 @@
+import type { Page } from '@playwright/test'
 import { chooseScenario, expect, FOOTER, openDesk, test } from './fixtures'
 
+// The WCAG 1.4.12 text-spacing overrides. Added through the CSS object model, because the page's
+// Content-Security-Policy rightly refuses an injected style element.
+const TEXT_SPACING = [
+  '* { line-height: 1.5 !important; letter-spacing: 0.12em !important; word-spacing: 0.16em !important; }',
+  'p { margin-bottom: 2em !important; }',
+]
+
+async function applyTextSpacing(page: Page) {
+  await page.evaluate((rules) => {
+    const sheet = Array.from(document.styleSheets).find((item) => item.ownerNode instanceof HTMLLinkElement)
+    if (!sheet) throw new Error('no stylesheet to extend')
+    for (const rule of rules) sheet.insertRule(rule, sheet.cssRules.length)
+  }, TEXT_SPACING)
+}
+
+/** Rows that are fully inside the window and inside the table's own scroll area. */
+async function visibleRows(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const scroller = document.querySelector('.ds-table__scroll')!.getBoundingClientRect()
+    const head = document.querySelector('.ds-table thead')!.getBoundingClientRect()
+    const top = Math.max(scroller.top, head.bottom, 0)
+    const bottom = Math.min(scroller.bottom, window.innerHeight)
+    return Array.from(document.querySelectorAll('tr[data-row]')).filter((row) => {
+      const box = row.getBoundingClientRect()
+      return box.height > 0 && box.top >= top - 1 && box.bottom <= bottom + 1
+    }).length
+  })
+}
+
+test.describe('the table gets the screen', () => {
+  for (const size of [
+    { width: 1024, height: 768, atLeast: 8 },
+    { width: 1440, height: 900, atLeast: 15 },
+  ]) {
+    test(`at ${size.width} by ${size.height}, with the note open, at least ${size.atLeast} rows are in view`, async ({ page }) => {
+      await page.setViewportSize({ width: size.width, height: size.height })
+      await openDesk(page)
+      await expect(page.getByTestId('what-this-is')).toBeVisible()
+      expect(await visibleRows(page)).toBeGreaterThanOrEqual(size.atLeast)
+    })
+  }
+
+  test('at 1280 by 800 with the WCAG text-spacing overrides, rows are still in view', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await openDesk(page)
+    await applyTextSpacing(page)
+    expect(await visibleRows(page)).toBeGreaterThanOrEqual(4)
+    const tableHeight = await page.locator('.ds-table__scroll').evaluate((node) => node.getBoundingClientRect().height)
+    expect(tableHeight).toBeGreaterThanOrEqual(300)
+    // With the detail panel open as well.
+    await page.locator('tr[data-row]').first().click()
+    await expect(page.getByTestId('payout-detail')).toBeVisible()
+    expect(await visibleRows(page)).toBeGreaterThanOrEqual(4)
+  })
+})
+
 test.describe('instruction table', () => {
-  test('a first visit in a fresh browser shows the seeded table without a reload', async ({ page }) => {
+  test('a first visit in a fresh browser shows the seeded table without a reload', { tag: '@smoke' }, async ({ page }) => {
     await page.goto('/')
     await expect(page.getByTestId('row-count')).toHaveText('Showing 60 of 60 instructions')
     await expect(page.locator('tr[data-row]')).toHaveCount(60)
@@ -15,6 +72,8 @@ test.describe('instruction table', () => {
     const note = page.getByTestId('what-this-is')
     await expect(note).toContainText('Sample by Bereket A.')
     await expect(note).toContainText('Vue 3')
+    await expect(note).toContainText('for a fictional company')
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Payout instructions')
     await expect(note.getByRole('link', { name: 'Idempotent submit' })).toHaveAttribute('href', /simulate=duplicate/)
     await expect(note.getByRole('link', { name: 'Outcome unknown' })).toHaveAttribute('href', /simulate=timeout-received/)
     await expect(note.getByRole('link', { name: 'Retries with backoff' })).toHaveAttribute('href', /simulate=fail-503/)
@@ -104,6 +163,88 @@ test.describe('instruction table', () => {
     await expect(rows.last()).toBeFocused()
   })
 
+  test('Escape closes the detail panel and returns focus to its row', async ({ page }) => {
+    await openDesk(page)
+    const rows = page.locator('tr[data-row]')
+    await rows.nth(3).focus()
+    await page.keyboard.press('Enter')
+    const panel = page.getByRole('complementary', { name: 'Payout PO-48257' })
+    await expect(panel).toBeVisible()
+
+    // From the row, and from a control inside the panel.
+    await page.keyboard.press('Escape')
+    await expect(panel).toHaveCount(0)
+    await expect(page).not.toHaveURL(/selected=/)
+    await expect(rows.nth(3)).toBeFocused()
+
+    await page.keyboard.press('Enter')
+    await panel.getByRole('button', { name: 'Copy idempotency key' }).focus()
+    await page.keyboard.press('Escape')
+    await expect(panel).toHaveCount(0)
+    await expect(rows.nth(3)).toBeFocused()
+
+    // An open drawer takes Escape for itself and leaves the panel alone.
+    await page.keyboard.press('Enter')
+    await expect(panel).toBeVisible()
+    await page.getByRole('button', { name: 'Request log' }).first().click()
+    await expect(page.getByRole('dialog', { name: 'Request log' })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: 'Request log' })).toHaveCount(0)
+    await expect(panel).toBeVisible()
+  })
+
+  test('a hostile sort or filter in the address falls back to the default view', async ({ page }) => {
+    for (const query of ['sort=__proto__:asc', 'sort=hasOwnProperty', 'sort=constructor:desc&status=__proto__&route=toString&currency=valueOf']) {
+      await openDesk(page, `/?${query}`)
+      await expect(page.getByTestId('row-count')).toHaveText('Showing 60 of 60 instructions')
+      await expect(page.locator('tr[data-row]').first()).toContainText('PO-48260')
+      await expect(page.getByRole('columnheader', { name: 'Created' })).toHaveAttribute('aria-sort', 'descending')
+      await expect(page.getByLabel('Status')).toHaveValue('')
+    }
+  })
+
+  test('a selected ID that does not exist gets a notice and is dropped from the address', async ({ page }) => {
+    await openDesk(page, '/?selected=PO-99999&status=failed')
+    const notice = page.getByTestId('selected-missing')
+    await expect(notice).toContainText('No instruction with the ID PO-99999')
+    await expect(page).not.toHaveURL(/selected=/)
+    await expect(page).toHaveURL(/status=failed/)
+    await notice.getByRole('button', { name: 'Dismiss' }).click()
+    await expect(notice).toHaveCount(0)
+
+    await page.goto('/?selected=not-an-id')
+    await expect(page.getByTestId('selected-missing')).toContainText('not-an-id')
+    await expect(page).not.toHaveURL(/selected=/)
+  })
+
+  test('rates are grouped, fixed to the places of their route, and lined up on the decimal point', async ({ page }) => {
+    await openDesk(page)
+    const cells = page.locator('tr[data-row] td[data-label="Rate"] .ds-rate')
+    const texts = await cells.allTextContents()
+    expect(texts.length).toBe(60)
+    for (const text of texts) expect(text, text).toMatch(/^(\d{1,3}(,\d{3})*)\.(\d{2}|\d{4})$/)
+    expect(texts.some((text) => /^\d,\d{3}\.\d{2}$/.test(text))).toBe(true)
+    // Every decimal point sits at the same horizontal position.
+    const points = await cells.evaluateAll((nodes) => nodes.map((node) => Math.round(node.querySelector('.ds-rate__fraction')!.getBoundingClientRect().left)))
+    expect(new Set(points).size).toBe(1)
+  })
+
+  test('a filter change is announced once to screen readers, and polling is not', async ({ page }) => {
+    await openDesk(page)
+    const live = page.getByTestId('filter-announcement')
+    await expect(live).toHaveAttribute('role', 'status')
+    await expect(live).toHaveText('')
+    await page.getByLabel('Status').selectOption('failed')
+    await expect(live).toHaveText('Showing 5 of 60 instructions, sorted by created, descending.')
+    await page.getByRole('button', { name: 'Target amount' }).click()
+    await expect(live).toHaveText('Showing 5 of 60 instructions, sorted by target amount, ascending.')
+    // Two more polls arrive and the text stays as it was.
+    const polls = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/payouts')
+    await polls
+    await page.waitForResponse((response) => new URL(response.url()).pathname === '/api/payouts')
+    await expect(live).toHaveText('Showing 5 of 60 instructions, sorted by target amount, ascending.')
+  })
+
   test('an outcome unknown payout offers a status check and no retry', async ({ page }) => {
     await openDesk(page, '/?status=outcome_unknown')
     await expect(page.locator('tr[data-row]')).toHaveCount(2)
@@ -171,6 +312,38 @@ test.describe('instruction table', () => {
     await expect(page.getByTestId('sync-state')).not.toContainText('out of date')
   })
 
+  test('a reload during a polling outage says it could not load, never that the list is empty', async ({ page }) => {
+    await openDesk(page)
+    await chooseScenario(page, 'Polling outage')
+    await expect(page.getByTestId('stale-banner')).toBeVisible()
+    await page.reload()
+
+    await expect(page.getByTestId('never-loaded-banner')).toContainText('Could not load instructions yet. Retrying.')
+    await expect(page.getByTestId('never-loaded')).toContainText('This is not an empty list')
+    await expect(page.getByTestId('row-count')).toHaveText('No instructions loaded yet')
+    await expect(page.getByText('No instructions match these filters.')).toHaveCount(0)
+    await expect(page.getByText('The rows below are the last ones received.')).toHaveCount(0)
+    await expect(page.getByText(/see all 0 instructions/)).toHaveCount(0)
+    await expect(page.locator('tr[data-row]')).toHaveCount(0)
+
+    await chooseScenario(page, 'Normal')
+    await expect(page.getByTestId('row-count')).toHaveText('Showing 60 of 60 instructions', { timeout: 20_000 })
+    await expect(page.getByTestId('never-loaded-banner')).toHaveCount(0)
+  })
+
+  test('the Simulate panel closes when focus leaves it', async ({ page }) => {
+    await openDesk(page)
+    const toggle = page.getByTestId('simulate-toggle')
+    await toggle.click()
+    const panel = page.locator('#simulate-panel')
+    await expect(panel).toBeVisible()
+    // Tab past the last control in the panel: the radio group, then the link under the chosen option.
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Tab')
+    await expect(panel).toBeHidden()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
+
   test('the Simulate control offers every scenario with what to watch', async ({ page }) => {
     await openDesk(page)
     const toggle = page.getByTestId('simulate-toggle')
@@ -185,6 +358,7 @@ test.describe('instruction table', () => {
       'Duplicate submit',
       'Next rate expires in 6 seconds',
       'Partial batch failure',
+      'Next batch submit times out, batch received',
       'Polling outage',
     ]
     const panel = page.locator('#simulate-panel')
@@ -228,7 +402,7 @@ test.describe('instruction table', () => {
     await page.goto('/no/such/page')
     await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible()
     await expect(page.locator('footer')).toHaveText(FOOTER)
-    await page.getByRole('main').getByRole('link', { name: 'Instructions' }).click()
+    await page.getByRole('main').getByRole('link', { name: 'Payout instructions' }).click()
     await expect(page.getByTestId('row-count')).toContainText('Showing 60')
   })
 })
