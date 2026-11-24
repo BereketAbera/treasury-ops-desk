@@ -5,6 +5,7 @@ import PayoutRateSection from '@/components/payout/PayoutRateSection.vue'
 import PayoutSubmissionStatus from '@/components/payout/PayoutSubmissionStatus.vue'
 import { DsBanner, DsButton, DsCopyButton, DsField, DsMoneyInput, DsSelect, DsTextInput, formatMinor } from '@/ds'
 import { decimalsOf } from '@/lib/currencies'
+import { focusInView } from '@/lib/focus'
 import { api } from '@/lib/http'
 import { newCorrelationId } from '@/lib/ids'
 import { findRoute, PURPOSE_CODES, routeLabel, ROUTES } from '@/lib/routes'
@@ -211,7 +212,7 @@ async function onSubmit() {
   rateMissing.value = quoteState.value !== 'active'
   if (Object.keys(validation.value.errors).length > 0 || rateMissing.value) {
     await nextTick()
-    summary.value?.focus()
+    focusInView(summary.value)
     return
   }
   const body = buildBody()
@@ -446,6 +447,7 @@ onMounted(async () => {
   }
 
   &__summary {
+    scroll-margin: var(--space-3);
     padding: var(--space-3) var(--space-4);
     border: 2px solid var(--color-danger-text);
     border-radius: var(--radius-md);

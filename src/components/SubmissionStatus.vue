@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { DsBanner, DsButton, DsCopyButton } from '@/ds'
 import { DEFAULT_TIMEOUT_MS } from '@/lib/api'
+import { focusInView } from '@/lib/focus'
 import { progressText, type SubmissionState } from '@/lib/submission'
 import { SUBMIT_POLICY } from '@/lib/retry'
 
@@ -38,7 +39,7 @@ const doubt = computed(() => `The ${props.what} may or may not have been receive
 
 defineExpose({
   /** Moves focus to the result, so it is read out and the next action is one Tab away. */
-  focus: () => root.value?.focus(),
+  focus: () => focusInView(root.value),
 })
 </script>
 
@@ -109,6 +110,8 @@ defineExpose({
 
 <style lang="scss">
 .submission {
+  scroll-margin: var(--space-3);
+
   &:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 3px;

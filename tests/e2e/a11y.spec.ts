@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { chooseScenario, expect, expectNoAxeViolations, expectNoSidewaysScroll, FOOTER, open, openDesk, openPrefilledForm, test } from './fixtures'
+import { chooseScenario, expect, expectInView, expectNoAxeViolations, expectNoSidewaysScroll, FOOTER, open, openDesk, openPrefilledForm, test } from './fixtures'
 
 test.describe('accessibility: axe on every page and state', () => {
   test('instruction table', { tag: '@smoke' }, async ({ page }) => {
@@ -265,6 +265,13 @@ test.describe('phone, 390 pixels wide', () => {
     await expect(cards).toHaveCount(5)
     await expect(page.getByTestId('show-more')).toHaveCount(0)
     await expect(count).toHaveText('Showing 5 of 60 instructions')
+  })
+
+  test('a submit with errors brings the error summary into view', { tag: '@smoke' }, async ({ page }) => {
+    await open(page, '/payouts/new')
+    await page.getByTestId('submit-payout').click()
+    await expect(page.getByTestId('error-summary')).toBeFocused()
+    await expectInView(page, page.getByTestId('error-summary'))
   })
 
   test('outcome unknown, for a payout and for a batch: no sideways scroll and axe clean', async ({ page }) => {
