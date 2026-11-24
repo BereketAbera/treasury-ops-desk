@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
 import { DsStatusBadge } from '@/ds'
-import { TEST_COUNTS } from '@/lib/testCounts'
+import counts from '@/generated/test-counts.json'
+
+// Written by scripts/test-counts.mjs from the test runners' own listings, as part of every build.
+const browsers = counts.endToEnd.projects
 </script>
 
 <template>
@@ -19,6 +22,7 @@ import { TEST_COUNTS } from '@/lib/testCounts'
       <a href="#answers">What the screen does with each answer</a>
       <a href="#production">What production would use</a>
       <a href="#security">Security notes</a>
+      <a href="#accessibility">Accessibility</a>
       <a href="#tests">Tests</a>
       <a href="#api-notes">Component API notes</a>
       <a href="#sources">Sources</a>
@@ -60,7 +64,7 @@ import { TEST_COUNTS } from '@/lib/testCounts'
             <tr>
               <th scope="row">Idempotency</th>
               <td>The mock stores the first result under each key and returns it for a repeat, with <code>Idempotent-Replayed: true</code>.</td>
-              <td>Keys are kept for the tab's life. A real API would expire them, often after 24 hours.</td>
+              <td>Keys are kept for the tab's life. A real API would expire them, for example after 24 hours.</td>
             </tr>
             <tr>
               <th scope="row">Eventual consistency</th>
@@ -107,7 +111,7 @@ import { TEST_COUNTS } from '@/lib/testCounts'
             </tr>
             <tr>
               <th scope="row">503, 429, 502, 504</th>
-              <td>The server did not do the work. Retryable.</td>
+              <td>Temporary failure. Safe to resend because the key is the same.</td>
               <td>Up to 3 attempts with a growing wait and a visible count, then a manual "Retry with the same key".</td>
             </tr>
             <tr>
@@ -116,13 +120,17 @@ import { TEST_COUNTS } from '@/lib/testCounts'
               <td>The reason, tied to the fields where possible, and no retry button.</td>
             </tr>
             <tr>
-              <th scope="row">Timeout, dropped connection, 500</th>
+              <th scope="row">Timeout, dropped connection, 500, an unreadable 2xx</th>
               <td>No usable answer. The work may or may not have happened.</td>
               <td><DsStatusBadge status="outcome_unknown" /> with "Check status" and no resend, until the check says "received" or "not received, safe to resend".</td>
             </tr>
           </tbody>
         </table>
       </div>
+      <p>
+        The status decides the class before the body is read, so a gateway's HTML 504 is still a temporary failure and
+        not a final answer.
+      </p>
       <p>
         To see a final 422, submit a payout whose account number ends in <code>0000</code>: the mock bank does not
         recognise it. To see a 409, reuse a reference that already exists, for example one from the table.
@@ -137,12 +145,19 @@ import { TEST_COUNTS } from '@/lib/testCounts'
     <section id="production" class="card how__section">
       <h2>What production would use</h2>
       <ul>
-        <li>A real payout API behind an authenticated session, in place of the service worker.</li>
+        <li>A real payout API, in place of the service worker.</li>
+        <li>An identity provider for sign-in, with roles deciding who can create, approve and release. There is no login here.</li>
+        <li>Static hosting behind a CDN for the built files: HTML that is always revalidated, and hashed assets cached for a long time.</li>
+        <li>Real-user monitoring and tracing that pick up the same correlation ID, so a request can be followed from the click to the backend logs. The request log drawer stands in for that here.</li>
         <li>Server push or a shorter poll for status changes. Polling is used here because it is simple to reason about and to fail.</li>
-        <li>Real user monitoring and tracing that pick up the same correlation ID, so a request can be followed from the click to the backend logs. The request log drawer stands in for that here.</li>
         <li>Approval by a second person before release. The seeded "awaiting approval" rows show the state, but there is no approve action.</li>
         <li>Server-side paging, sorting and filtering for the table.</li>
-        <li>The component library published as a versioned package, with a changelog, in place of a folder in this repository.</li>
+        <li>The component library published as a versioned package in a private package registry, with a changelog, in place of a folder in this repository.</li>
+        <li>
+          A pipeline that runs on every change. This repository has a workflow file, <code>.github/workflows/ci.yml</code>, that
+          runs lint, typecheck, the unit and component tests and the build. The end-to-end suite is run by hand with the
+          commands under Tests.
+        </li>
       </ul>
     </section>
 
@@ -163,6 +178,32 @@ import { TEST_COUNTS } from '@/lib/testCounts'
       </ul>
     </section>
 
+    <section id="accessibility" class="card how__section">
+      <h2>Accessibility</h2>
+      <p>The target is WCAG 2.1 level AA. This is what the end-to-end suite checks, and what it does not.</p>
+      <h3>Checked on every run</h3>
+      <ul>
+        <li>
+          axe-core on every page and on the states that matter (detail panel, empty and out-of-date table, Simulate panel,
+          request log, dialog, form with errors, outcome unknown, batch result), with the rule tags <code>wcag2a</code>,
+          <code>wcag2aa</code>, <code>wcag21a</code> and <code>wcag21aa</code>, at desktop width and at 390 pixels.
+        </li>
+        <li>Keyboard: table rows by arrow keys, Home, End and Enter; Escape closes the detail panel and returns focus to its row; at 390 pixels every Tab stop on the home page has a visible focus indicator.</li>
+        <li>Focus: the drawer and the dialog trap focus, close on Escape and return focus to the control that opened them; a route change and a batch retry move focus to the page heading; a failed submit moves it to the error summary.</li>
+        <li>Reduced motion: with the system setting on, the drawer animation is off.</li>
+        <li>Status is never colour alone: every badge is an icon, a text label and a tint, and a unit test holds each status to that.</li>
+        <li>Reflow: no sideways scroll at 390 pixels; the table still shows rows at 1024 by 768 and with the WCAG text-spacing overrides applied.</li>
+        <li>Touch targets on a phone are at least 44 pixels high.</li>
+      </ul>
+      <h3>Not checked</h3>
+      <ul>
+        <li>No screen reader was used. Roles, names and live regions are set and tested as attributes, not listened to.</li>
+        <li v-if="browsers.length === 1">The suite runs in Chromium only. Firefox and WebKit are not covered.</li>
+        <li v-else>The full suite runs in Chromium. Firefox and WebKit run a smoke subset only, listed under Tests.</li>
+        <li>Automated rules find only part of what an audit by a person would.</li>
+      </ul>
+    </section>
+
     <section id="tests" class="card how__section">
       <h2>Tests</h2>
       <div class="table-scroll" role="region" aria-label="Test commands" tabindex="0">
@@ -177,23 +218,26 @@ import { TEST_COUNTS } from '@/lib/testCounts'
           <tbody>
             <tr>
               <td><code>pnpm test</code></td>
-              <td>Vitest unit tests: money parsing and formatting, validation, backoff, the API client's idempotency behaviour, the submit state machine, the stores, the CSV parser.</td>
-              <td class="right num">{{ TEST_COUNTS.unit }}</td>
+              <td>Vitest unit tests: money parsing and formatting, validation, backoff, the API client's idempotency behaviour, the submit state machine, the stores, the URL and storage guards, the CSV parser.</td>
+              <td class="right num" data-testid="count-unit">{{ counts.unit }}</td>
             </tr>
             <tr>
               <td><code>pnpm test</code></td>
               <td>Vue Test Utils component tests: MoneyInput, Field, StatusBadge, DataTable, Countdown, Drawer.</td>
-              <td class="right num">{{ TEST_COUNTS.component }}</td>
+              <td class="right num" data-testid="count-component">{{ counts.component }}</td>
             </tr>
-            <tr>
+            <tr v-for="project in browsers" :key="project.name">
               <td><code>pnpm test:e2e</code></td>
-              <td>Playwright against a local build: every flow on this page, axe on every page, no sideways scroll at 390 pixels.</td>
-              <td class="right num">{{ TEST_COUNTS.endToEnd }}</td>
+              <td>
+                Playwright in {{ project.label }} against a local build<template v-if="project.smoke">: the smoke subset</template
+                ><template v-else>: every flow on this page, axe on every page, no sideways scroll at 390 pixels</template>.
+              </td>
+              <td class="right num" :data-testid="`count-e2e-${project.name}`">{{ project.tests }}</td>
             </tr>
             <tr>
               <td><code>pnpm test:e2e:live</code></td>
               <td>The same Playwright suite against the deployed address.</td>
-              <td class="right num">{{ TEST_COUNTS.endToEnd }}</td>
+              <td class="right num">{{ counts.endToEnd.total }}</td>
             </tr>
             <tr>
               <td><code>pnpm lint</code>, <code>pnpm typecheck</code></td>
@@ -203,6 +247,10 @@ import { TEST_COUNTS } from '@/lib/testCounts'
           </tbody>
         </table>
       </div>
+      <p class="muted">
+        The counts are not typed in. <code>scripts/test-counts.mjs</code> asks Vitest and Playwright to list their tests and
+        writes the numbers into the build, so this table cannot show a test the suite does not have.
+      </p>
     </section>
 
     <section id="api-notes" class="card how__section">
@@ -217,6 +265,11 @@ import { TEST_COUNTS } from '@/lib/testCounts'
         consumer converts it with <code>BigInt()</code> for arithmetic. The currency's decimal places are a required prop, not
         a guess from the currency code, so a zero-decimal currency such as UGX and a six-decimal asset such as USDC are
         handled by the same rule. Extra decimal places are reported as a problem and never rounded away.
+      </p>
+      <p>
+        The input never guesses at a separator. The decimal separator is a point. A comma is accepted only as a thousands
+        separator in a valid position, in groups of three before the point: <code>1,000.50</code> is an amount, and
+        <code>1000,50</code> is reported as a problem with the message "Use a point for decimals", not read as 100,050.
       </p>
 
       <h3>2. StatusBadge takes a status, not a colour</h3>
@@ -256,6 +309,8 @@ import { TEST_COUNTS } from '@/lib/testCounts'
 </template>
 
 <style lang="scss">
+@use '../ds/tokens/_tokens.scss' as t;
+
 .how {
   &__toc {
     display: flex;
@@ -272,7 +327,7 @@ import { TEST_COUNTS } from '@/lib/testCounts'
       margin-top: var(--space-2);
     }
 
-    ul {
+    > ul {
       display: grid;
       gap: var(--space-2);
       margin: 0;
@@ -288,6 +343,14 @@ import { TEST_COUNTS } from '@/lib/testCounts'
       background: transparent;
       font-size: var(--font-size-sm);
     }
+  }
+}
+
+@media (max-width: t.$breakpoint-phone) {
+  .how__toc a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
   }
 }
 </style>

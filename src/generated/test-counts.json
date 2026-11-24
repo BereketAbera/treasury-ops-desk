@@ -1,0 +1,27 @@
+{
+  "unit": 127,
+  "component": 42,
+  "endToEnd": {
+    "total": 103,
+    "projects": [
+      {
+        "name": "chromium",
+        "label": "Chromium",
+        "tests": 91,
+        "smoke": false
+      },
+      {
+        "name": "firefox",
+        "label": "Firefox",
+        "tests": 6,
+        "smoke": true
+      },
+      {
+        "name": "webkit",
+        "label": "WebKit",
+        "tests": 6,
+        "smoke": true
+      }
+    ]
+  }
+}

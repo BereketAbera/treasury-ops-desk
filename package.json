@@ -6,7 +6,8 @@
   "scripts": {
     "tokens": "node scripts/build-tokens.mjs",
     "dev": "pnpm tokens && vite --port 3401 --strictPort",
-    "build": "pnpm tokens && vite build && storybook build -o dist/storybook --quiet",
+    "test:counts": "node scripts/test-counts.mjs",
+    "build": "pnpm tokens && pnpm test:counts && vite build && storybook build -o dist/storybook --quiet",
     "build:app": "pnpm tokens && vite build",
     "preview": "vite preview --port 3401 --strictPort",
     "storybook": "storybook dev -p 3401 --no-open",
