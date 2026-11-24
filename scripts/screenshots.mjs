@@ -44,8 +44,13 @@ await shot('home-desktop', {}, async (page) => {
   await tableReady(page)
 })
 
+await shot('home-1024', { width: 1024, height: 768 }, async (page) => {
+  await page.goto(`${base}/`)
+  await tableReady(page)
+})
+
 await shot('home-phone', { width: 390, height: 844, fullPage: true }, async (page) => {
-  await page.goto(`${base}/?status=failed`)
+  await page.goto(`${base}/`)
   await tableReady(page)
 })
 
@@ -62,6 +67,12 @@ await shot('unknown-outcome-desktop', {}, async (page) => {
 })
 
 await shot('batch-result-desktop', {}, async (page) => {
+  await page.goto(`${base}/batches/new?sample=1&simulate=partial-batch`)
+  await page.getByTestId('submit-batch').click()
+  await page.getByTestId('batch-summary').waitFor()
+})
+
+await shot('batch-result-phone', { width: 390, height: 844, fullPage: true }, async (page) => {
   await page.goto(`${base}/batches/new?sample=1&simulate=partial-batch`)
   await page.getByTestId('submit-batch').click()
   await page.getByTestId('batch-summary').waitFor()
