@@ -23,6 +23,18 @@ async function apiAnswers(): Promise<boolean> {
 }
 
 /**
+ * MSW asks the browser to look for a newer worker script and does not wait for the answer. A page that
+ * closes as the last one makes its worker unregister itself, and when the next page asks at that moment
+ * the browser refuses with "Not found". The page still has its worker, so a refused update is not an error.
+ */
+async function allowRefusedWorkerUpdate(): Promise<void> {
+  for (const registration of await navigator.serviceWorker.getRegistrations()) {
+    const update = registration.update.bind(registration)
+    registration.update = () => update().catch(() => registration)
+  }
+}
+
+/**
  * Starts the mock API and waits until it really answers. On a first visit the
  * service worker has to install and take control of the page before any
  * request can be answered, so the app is not mounted until a probe succeeds.
@@ -31,6 +43,7 @@ async function startMockApi(): Promise<boolean> {
   if (!('serviceWorker' in navigator)) return false
   try {
     const { worker } = await loadMockWorker()
+    await allowRefusedWorkerUpdate()
     // Where service workers are blocked, registration can reject or never settle. Do not wait for ever.
     const started = worker.start({ onUnhandledFrame: 'bypass', quiet: true, serviceWorker: { url: '/mockServiceWorker.js' } })
     const gaveUp = sleep(8_000).then(() => {
