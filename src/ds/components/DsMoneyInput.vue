@@ -106,7 +106,8 @@ watch(text, (value) => sync(value))
     box-shadow: inset 0 0 0 1px var(--color-danger-text);
   }
 
-  &--disabled {
+  &--disabled,
+  &:has(.ds-money__input:disabled) {
     background: var(--color-neutral-tint);
   }
 

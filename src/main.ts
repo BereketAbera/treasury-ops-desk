@@ -3,7 +3,6 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import './ds/tokens/tokens.css'
 import { connectRequestLog } from './lib/http'
-import { worker } from './mocks/browser'
 import { loadScenario } from './mocks/scenario'
 import { createAppRouter } from './router'
 import { useRequestLogStore } from './stores/requestLog'
@@ -31,6 +30,8 @@ async function apiAnswers(): Promise<boolean> {
 async function startMockApi(): Promise<boolean> {
   if (!('serviceWorker' in navigator)) return false
   try {
+    // The mock API is loaded as its own chunk, so the app's code and the mock's code stay apart.
+    const { worker } = await import('./mocks/browser')
     // Where service workers are blocked, registration can reject or never settle. Do not wait for ever.
     const started = worker.start({ onUnhandledFrame: 'bypass', quiet: true, serviceWorker: { url: '/mockServiceWorker.js' } })
     const gaveUp = sleep(8_000).then(() => {

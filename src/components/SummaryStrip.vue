@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { DsAmount, DsIcon, STATUS_LOOK, type StatusName } from '@/ds'
 import { CURRENCY_CODES, decimalsOf, type CurrencyCode } from '@/lib/currencies'
+import { plural } from '@/lib/format'
 import type { PayoutRow } from '@/stores/payouts'
 
 const props = defineProps<{
@@ -67,7 +68,7 @@ const totals = computed(() => {
       <ul v-if="totals.length > 0" class="summary__list">
         <li v-for="total in totals" :key="total.code">
           <DsAmount :minor="total.minor" :currency="total.code" :decimals="decimalsOf(total.code)" />
-          <span class="muted summary__rows num">{{ total.rows }}</span>
+          <span class="muted summary__rows num">{{ plural(total.rows, 'row') }}</span>
         </li>
       </ul>
       <p v-else class="muted summary__none">{{ loading ? 'Loading' : 'No rows shown.' }}</p>
@@ -80,25 +81,24 @@ const totals = computed(() => {
 
 .summary {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
   gap: var(--space-2);
-  align-items: stretch;
 
   &__counts {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: var(--space-2);
     margin: 0;
   }
 
   &__count {
     display: flex;
-    flex-direction: column;
+    align-items: center;
     justify-content: space-between;
     gap: var(--space-2);
-    min-width: 118px;
-    padding: var(--space-2) var(--space-3);
+    min-width: 0;
+    padding: 6px var(--space-3);
     border: 1px solid var(--color-divider);
-    border-top: 3px solid currentColor;
+    border-left: 3px solid currentColor;
     border-radius: var(--radius-md);
     background: var(--color-surface);
 
@@ -106,6 +106,7 @@ const totals = computed(() => {
       display: flex;
       align-items: center;
       gap: var(--space-1);
+      min-width: 0;
       font-size: var(--font-size-xs);
       font-weight: var(--font-weight-bold);
     }
@@ -113,9 +114,9 @@ const totals = computed(() => {
     dd {
       margin: 0;
       color: var(--color-ink);
-      font-size: var(--font-size-xl);
+      font-size: var(--font-size-lg);
       font-weight: var(--font-weight-bold);
-      line-height: 1;
+      line-height: 1.2;
     }
 
     &--warning {
@@ -140,50 +141,42 @@ const totals = computed(() => {
   }
 
   &__totals {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px var(--space-4);
     min-width: 0;
-    padding: var(--space-2) var(--space-3);
+    padding: 6px var(--space-3);
     border: 1px solid var(--color-divider);
     border-radius: var(--radius-md);
     background: var(--color-surface);
   }
 
   &__heading {
-    margin-bottom: var(--space-1);
     color: var(--color-muted);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-bold);
   }
 
   &__list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-    gap: 2px var(--space-4);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px var(--space-5);
     margin: 0;
     padding: 0;
     list-style: none;
     font-size: var(--font-size-sm);
 
     li {
-      display: flex;
+      display: inline-flex;
       align-items: baseline;
-      justify-content: flex-end;
       gap: var(--space-1);
       white-space: nowrap;
     }
   }
 
   &__rows {
-    min-width: 5ch;
     font-size: var(--font-size-xs);
-    text-align: left;
-  }
-
-  &__rows::before {
-    content: '· ';
-  }
-
-  &__rows::after {
-    content: ' rows';
   }
 
   &__none {
@@ -192,16 +185,18 @@ const totals = computed(() => {
 }
 
 @media (max-width: t.$breakpoint-desk) {
-  .summary {
-    grid-template-columns: minmax(0, 1fr);
+  .summary__counts {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+}
 
-    &__counts {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    }
+@media (max-width: t.$breakpoint-phone) {
+  .summary__list {
+    display: grid;
+    width: 100%;
 
-    &__count {
-      min-width: 0;
+    li {
+      justify-content: space-between;
     }
   }
 }
