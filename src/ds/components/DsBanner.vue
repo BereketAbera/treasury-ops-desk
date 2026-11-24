@@ -53,6 +53,8 @@ const role = computed(() => (props.announce === 'none' ? undefined : props.annou
 </template>
 
 <style lang="scss">
+@use '../tokens/_tokens.scss' as t;
+
 .ds-banner {
   display: flex;
   align-items: flex-start;
@@ -142,6 +144,14 @@ const role = computed(() => (props.announce === 'none' ? undefined : props.annou
     &:hover {
       background: rgba(22, 34, 46, 0.08);
     }
+  }
+}
+
+@media (max-width: t.$breakpoint-phone) {
+  .ds-banner__dismiss {
+    width: 44px;
+    height: 44px;
+    margin: -8px -8px -8px 0;
   }
 }
 </style>

@@ -13,6 +13,10 @@ export const ICONS = {
   'pause-circle': [CIRCLE, 'M6.5 5.8v4.4M9.5 5.8v4.4'],
   'alert-triangle': ['M8 2.2l6.3 11.1H1.7z', 'M8 6.5v3.1', 'M8 11.6v.1'],
   return: ['M6 3.6L2.8 6.8 6 10', 'M3 6.8h6.4a3.3 3.3 0 0 1 0 6.6H7.6'],
+  // An hourglass, for "waiting on someone else": no circle, so it cannot be read as the clock or the sync arrows.
+  hourglass: ['M4.2 2h7.6M4.2 14h7.6', 'M5 2v2.2c0 1.6 3 2.6 3 3.8s-3 2.2-3 3.8V14', 'M11 2v2.2c0 1.6-3 2.6-3 3.8s3 2.2 3 3.8V14'],
+  // Two arrows chasing each other, for "in progress".
+  sync: ['M2.6 7.2a5.5 5.5 0 0 1 9.7-2.7', 'M12.6 1.9v2.8H9.8', 'M13.4 8.8a5.5 5.5 0 0 1-9.7 2.7', 'M3.4 14.1v-2.8h2.8'],
   progress: ['M8 1.75a6.25 6.25 0 1 1-6.25 6.25', 'M8 5v3h3'],
   info: [CIRCLE, 'M8 7.3v3.6', 'M8 5v.1'],
   copy: [

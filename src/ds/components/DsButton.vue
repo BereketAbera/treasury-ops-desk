@@ -51,6 +51,8 @@ function onClick(event: MouseEvent) {
 </template>
 
 <style lang="scss">
+@use '../tokens/_tokens.scss' as t;
+
 .ds-button {
   display: inline-flex;
   align-items: center;
@@ -127,6 +129,14 @@ function onClick(event: MouseEvent) {
 @media (prefers-reduced-motion: reduce) {
   .ds-button__spinner {
     animation: none;
+  }
+}
+
+@media (max-width: t.$breakpoint-phone) {
+  .ds-button--sm {
+    min-height: 44px;
+    padding: 0 var(--space-3);
+    font-size: var(--font-size-sm);
   }
 }
 </style>

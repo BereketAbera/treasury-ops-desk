@@ -62,6 +62,8 @@ const { onKeydown } = useFocusTrap(
 </template>
 
 <style lang="scss">
+@use '../tokens/_tokens.scss' as t;
+
 .ds-overlay {
   position: fixed;
   inset: 0;
@@ -101,9 +103,11 @@ const { onKeydown } = useFocusTrap(
     height: 100%;
   }
 
+  // As tall as its content, up to a limit: two log rows do not need half the screen.
   &--bottom {
     width: 100%;
-    height: min(46vh, 520px);
+    min-height: 140px;
+    max-height: min(60vh, 560px);
     border-top: 1px solid var(--color-control-border);
   }
 
@@ -175,6 +179,13 @@ const { onKeydown } = useFocusTrap(
   .ds-drawer,
   .ds-dialog {
     animation: none;
+  }
+}
+
+@media (max-width: t.$breakpoint-phone) {
+  .ds-icon-button {
+    width: 44px;
+    height: 44px;
   }
 }
 </style>

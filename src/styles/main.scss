@@ -54,6 +54,17 @@ code,
   font-size: 0.93em;
 }
 
+// An ID is one word: PO-48262 must never break after the hyphen.
+.mono {
+  white-space: nowrap;
+}
+
+// Long values (keys, hashes, account numbers) may break anywhere when the space runs out.
+.mono--wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .muted {
   color: var(--color-muted);
 }
@@ -167,8 +178,69 @@ code,
 }
 
 @media (max-width: t.$breakpoint-phone) {
+  // Touch targets: every control is at least 44 pixels high on a phone. Desktop density is unchanged.
+  :root {
+    --size-control: 44px;
+  }
+
   .page {
     padding: var(--space-4);
+  }
+
+  // A table with the "cards" modifier stacks each row as a card with its labels, so no column is
+  // left off-screen in a sideways scroller.
+  .plain-table--cards {
+    display: block;
+
+    thead {
+      display: none;
+    }
+
+    tbody,
+    tr {
+      display: block;
+    }
+
+    tr {
+      margin-bottom: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      border: 1px solid var(--color-divider);
+      border-radius: var(--radius-md);
+      background: var(--color-surface);
+    }
+
+    td,
+    th[scope='row'] {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: var(--space-3);
+      min-height: 26px;
+      padding: 2px 0;
+      border: 0;
+      background: transparent;
+      text-align: right;
+      white-space: normal;
+
+      &::before {
+        content: attr(data-label);
+        flex: none;
+        color: var(--color-muted);
+        font-size: var(--font-size-xs);
+        font-weight: var(--font-weight-regular);
+        text-align: left;
+      }
+    }
+
+    // Longer text reads better under its label than squeezed beside it.
+    td.plain-table__wide {
+      display: block;
+      text-align: left;
+
+      &::before {
+        display: block;
+      }
+    }
   }
 }
 

@@ -34,7 +34,8 @@ afterEach(() => {
   document.documentElement.className = ''
 })
 
-describe.each(['drawer', 'dialog'])('focus management in the %s', (kind) => {
+// Called once per component with plain describe blocks, so the test listing counts all six tests.
+function focusManagement(kind: 'drawer' | 'dialog') {
   it('is a labelled modal dialog and takes focus when it opens', async () => {
     const wrapper = mount(Host, { attachTo: document.body, props: { kind } })
     const opener = document.getElementById('opener')!
@@ -78,4 +79,7 @@ describe.each(['drawer', 'dialog'])('focus management in the %s', (kind) => {
     expect(document.documentElement.classList.contains('ds-scroll-lock')).toBe(false)
     wrapper.unmount()
   })
-})
+}
+
+describe('focus management in the drawer', () => focusManagement('drawer'))
+describe('focus management in the dialog', () => focusManagement('dialog'))

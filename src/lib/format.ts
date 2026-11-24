@@ -23,6 +23,11 @@ export function formatClock(time: number | string): string {
   return clock.format(new Date(time))
 }
 
+/** Decimal places a rate is shown with: the places its route quotes in. */
+export function ratePlaces(routeRate: string | undefined): number {
+  return routeRate ? (routeRate.split('.')[1] ?? '').length : 2
+}
+
 export function formatDuration(ms: number | null): string {
   if (ms === null) return 'pending'
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`

@@ -33,6 +33,16 @@ describe('DsDataTable sorting', () => {
     expect(nextSort({ key: 'id', direction: 'desc' }, 'name')).toEqual({ key: 'name', direction: 'asc' })
   })
 
+  it('offers the same sort as one labelled select, for the phone layout that has no header row', async () => {
+    const wrapper = mountTable({ sort: { key: 'id', direction: 'asc' } })
+    const select = wrapper.get('.ds-table__phone-sort select')
+    expect(wrapper.get(`label[for="${select.attributes('id')}"]`).text()).toBe('Sort by')
+    expect(select.findAll('option').map((option) => option.text())).toEqual(['Reference, ascending', 'Reference, descending', 'Beneficiary, ascending', 'Beneficiary, descending'])
+    expect((select.element as HTMLSelectElement).value).toBe('id:asc')
+    await select.setValue('name:desc')
+    expect(wrapper.emitted('update:sort')?.[0]).toEqual([{ key: 'name', direction: 'desc' }])
+  })
+
   it('emits the requested sort from the header button and does not reorder rows itself', async () => {
     const wrapper = mountTable({ sort: { key: 'id', direction: 'asc' } })
     await wrapper.findAll('th button')[0]!.trigger('click')

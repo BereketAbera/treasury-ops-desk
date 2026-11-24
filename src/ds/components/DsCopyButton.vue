@@ -44,6 +44,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style lang="scss">
+@use '../tokens/_tokens.scss' as t;
+
 .ds-copy {
   display: inline-flex;
   align-items: center;
@@ -59,6 +61,13 @@ onBeforeUnmount(() => {
 
   &:hover {
     background: var(--color-row-hover);
+  }
+}
+
+@media (max-width: t.$breakpoint-phone) {
+  .ds-copy {
+    width: 44px;
+    height: 44px;
   }
 }
 </style>

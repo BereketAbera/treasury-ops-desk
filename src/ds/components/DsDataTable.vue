@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="Row">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import DsIcon from './DsIcon.vue'
 import { nextSort, type TableColumn, type TableDensity, type TableSort } from './table'
 
@@ -42,6 +42,25 @@ const activeIndex = ref(0)
 const skeletonRows = Array.from({ length: 12 }, (_, index) => index)
 
 const rowCount = computed(() => props.rows.length)
+
+// The stacked phone layout has no column headers to click, so the same sort is offered as one select.
+const sortSelectId = `table-sort-${useId()}`
+const sortChoices = computed(() =>
+  props.columns
+    .filter((column) => column.sortable)
+    .flatMap((column) => [
+      { value: `${column.key}:asc`, label: `${column.label}, ascending` },
+      { value: `${column.key}:desc`, label: `${column.label}, descending` },
+    ]),
+)
+const sortValue = computed(() => (props.sort ? `${props.sort.key}:${props.sort.direction}` : ''))
+
+function onSortSelect(event: Event) {
+  const choice = sortChoices.value.find((item) => item.value === (event.target as HTMLSelectElement).value)
+  if (!choice) return
+  const [key = '', direction] = choice.value.split(':')
+  emit('update:sort', { key, direction: direction === 'asc' ? 'asc' : 'desc' })
+}
 
 watch(rowCount, (count) => {
   if (activeIndex.value > count - 1) activeIndex.value = Math.max(0, count - 1)
@@ -106,6 +125,15 @@ defineExpose({ focusRow })
 
 <template>
   <div class="ds-table" :class="`ds-table--${density}`">
+    <div v-if="sortChoices.length > 0" class="ds-table__phone-sort">
+      <label :for="sortSelectId">Sort by</label>
+      <select :id="sortSelectId" class="ds-select" :value="sortValue" @change="onSortSelect">
+        <option v-if="!sortChoices.some((choice) => choice.value === sortValue)" :value="sortValue">
+          {{ sortValue === '' ? 'Not sorted' : 'A column not shown here' }}
+        </option>
+        <option v-for="choice in sortChoices" :key="choice.value" :value="choice.value">{{ choice.label }}</option>
+      </select>
+    </div>
     <div class="ds-table__scroll" role="region" :aria-label="caption" tabindex="0">
       <table class="ds-table__table" role="table" :aria-busy="loading ? 'true' : 'false'">
         <caption class="ds-visually-hidden">
@@ -206,6 +234,11 @@ defineExpose({ focusRow })
     flex: 1;
     min-height: 0;
     overflow: auto;
+  }
+
+  // Shown in the stacked phone layout only, where the column headers are not rendered.
+  &__phone-sort {
+    display: none;
   }
 
   &__table {
@@ -345,12 +378,29 @@ defineExpose({ focusRow })
       display: block;
     }
 
+    // No header row in the card layout: taken out of the tab order and the accessibility tree,
+    // not just clipped. Each cell carries its own label, and sorting moves to the select above.
     thead {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
+      display: none;
+    }
+
+    &__phone-sort {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      margin-bottom: var(--space-3);
+
+      label {
+        flex: none;
+        color: var(--color-muted);
+        font-size: var(--font-size-xs);
+        font-weight: var(--font-weight-bold);
+      }
+
+      select {
+        flex: 1;
+        min-width: 0;
+      }
     }
 
     tr {
@@ -367,7 +417,7 @@ defineExpose({ focusRow })
       justify-content: space-between;
       gap: var(--space-3);
       height: auto;
-      min-height: 26px;
+      min-height: 28px;
       padding: 0;
       border: 0;
       white-space: normal;
