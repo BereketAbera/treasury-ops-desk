@@ -6,12 +6,21 @@ import DsMoneyInput from '../components/DsMoneyInput.vue'
 const meta: Meta<typeof DsMoneyInput> = {
   title: 'Components/MoneyInput',
   component: DsMoneyInput,
-  args: { currency: 'NGN', decimals: 2 },
+  args: { currency: 'NGN', decimals: 2, invalid: false, disabled: false },
+  argTypes: {
+    currency: { control: 'text' },
+    decimals: { control: 'inline-radio', options: [0, 2, 6] },
+    // Set by Field through its slot, or bound with v-model in the story.
+    id: { control: false },
+    describedBy: { control: false },
+    modelValue: { control: false },
+    text: { control: false },
+  },
   parameters: {
     docs: {
       description: {
         component:
-          'v-model is the amount in minor units as an integer string, or null while the text is not a valid amount. It is never a float. Extra decimal places are reported through the problem event and are never rounded away.',
+          'v-model is the amount in minor units as an integer string, or null while the text is not a valid amount. It is never a float. Extra decimal places are reported through the problem event and are never rounded away. The decimal separator is a point. A comma is accepted only as a thousands separator in a valid position, so 1,000.50 is an amount and 1000,50 is a problem, not 100,050.',
       },
     },
   },

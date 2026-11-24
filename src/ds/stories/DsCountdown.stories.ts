@@ -6,6 +6,16 @@ import DsCountdown from '../components/DsCountdown.vue'
 const meta: Meta<typeof DsCountdown> = {
   title: 'Components/Countdown',
   component: DsCountdown,
+  args: { seconds: 30 } as never,
+  argTypes: {
+    seconds: { control: { type: 'number', min: 0, max: 120, step: 1 }, description: 'Story only: seconds until the countdown ends.' },
+    warnAt: { control: { type: 'number', min: 0, max: 60, step: 1 } },
+    label: { control: 'text' },
+    expiredLabel: { control: 'text' },
+    // A moment in time and a clock function: set by the story, not typed in.
+    expiresAt: { control: false },
+    now: { control: false },
+  } as never,
   parameters: {
     docs: {
       description: {

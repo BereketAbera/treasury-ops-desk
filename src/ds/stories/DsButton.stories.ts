@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
 import DsButton from '../components/DsButton.vue'
+import { ICON_NAMES } from '../components/icons'
 
 const meta: Meta<typeof DsButton> = {
   title: 'Components/Button',
@@ -8,6 +9,9 @@ const meta: Meta<typeof DsButton> = {
   argTypes: {
     variant: { control: 'select', options: ['primary', 'secondary', 'ghost', 'danger'] },
     size: { control: 'inline-radio', options: ['sm', 'md'] },
+    type: { control: 'inline-radio', options: ['button', 'submit'] },
+    icon: { control: 'select', options: [undefined, ...ICON_NAMES] },
+    href: { control: 'text' },
   },
   render: (args) => ({
     components: { DsButton },

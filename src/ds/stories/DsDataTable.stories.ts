@@ -37,12 +37,24 @@ const meta: Meta = {
   title: 'Components/DataTable',
   component: Table,
   args: { density: 'default', loading: false, empty: false },
-  argTypes: { density: { control: 'inline-radio', options: ['compact', 'default', 'relaxed'] } },
+  argTypes: {
+    density: { control: 'inline-radio', options: ['compact', 'default', 'relaxed'] },
+    loading: { control: 'boolean' },
+    empty: { control: 'boolean', description: 'Story only: show the table with no rows.' },
+    // Data and functions are set in code. The story supplies them.
+    columns: { control: false },
+    rows: { control: false },
+    rowKey: { control: false },
+    sort: { control: false },
+    selectedKey: { control: false },
+    caption: { control: false },
+    emptyText: { control: false },
+  },
   parameters: {
     docs: {
       description: {
         component:
-          'The table is controlled: it reports the sort and the opened row, and the parent decides what the rows are. Rows take keyboard focus one at a time. Arrow keys, Home, End, Page Up and Page Down move between rows; Enter or Space opens one. Below 720 pixels each row becomes a card.',
+          'The table is controlled: it reports the sort and the opened row, and the parent decides what the rows are. Rows take keyboard focus one at a time. Arrow keys, Home, End, Page Up and Page Down move between rows; Enter or Space opens one. Below 720 pixels each row becomes a card, the header row is removed, and a "Sort by" select takes its place.',
       },
     },
   },

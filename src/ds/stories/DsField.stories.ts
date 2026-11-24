@@ -1,13 +1,18 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
 import { ref } from 'vue'
 import DsField from '../components/DsField.vue'
-import DsSelect from '../components/DsSelect.vue'
 import DsTextInput from '../components/DsTextInput.vue'
 
 const meta: Meta<typeof DsField> = {
-  title: 'Components/Field, TextInput, Select',
+  title: 'Components/Field',
   component: DsField,
   args: { label: 'Your reference', hint: '4 to 20 capital letters, digits or hyphens.', required: true },
+  argTypes: {
+    label: { control: 'text' },
+    hint: { control: 'text' },
+    error: { control: 'text' },
+    id: { control: 'text' },
+  },
   parameters: {
     docs: {
       description: {
@@ -33,24 +38,3 @@ type Story = StoryObj<typeof DsField>
 export const Default: Story = {}
 export const WithError: Story = { args: { error: 'Use 4 to 20 capital letters, digits or hyphens, for example INV-20418.' } }
 export const Optional: Story = { args: { label: 'Note to approver', hint: undefined, required: false } }
-export const WithSelect: Story = {
-  args: { label: 'Route', hint: 'Source currency to target currency.' },
-  render: (args) => ({
-    components: { DsField, DsSelect },
-    setup: () => ({
-      args,
-      value: ref(''),
-      options: [
-        { value: 'USDC-NGN', label: 'USDC to NGN' },
-        { value: 'USDC-KES', label: 'USDC to KES' },
-        { value: 'USDC-UGX', label: 'USDC to UGX' },
-      ],
-    }),
-    template: `
-      <div style="max-width:360px">
-        <DsField v-bind="args">
-          <template #default="field"><DsSelect v-model="value" v-bind="field" :options="options" placeholder="Choose a route" /></template>
-        </DsField>
-      </div>`,
-  }),
-}

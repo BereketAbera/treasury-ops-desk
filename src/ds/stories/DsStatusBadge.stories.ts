@@ -6,7 +6,7 @@ const meta: Meta<typeof DsStatusBadge> = {
   title: 'Components/StatusBadge',
   component: DsStatusBadge,
   args: { status: 'completed' },
-  argTypes: { status: { control: 'select', options: STATUS_NAMES } },
+  argTypes: { status: { control: 'select', options: STATUS_NAMES }, label: { control: 'text' } },
   parameters: {
     docs: {
       description: {

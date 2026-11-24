@@ -9,6 +9,7 @@ const meta: Meta<typeof DsBanner> = {
   argTypes: {
     tone: { control: 'select', options: ['neutral', 'info', 'success', 'warning', 'danger', 'unknown'] },
     announce: { control: 'inline-radio', options: ['none', 'status', 'alert'] },
+    title: { control: 'text' },
   },
   render: (args) => ({
     components: { DsBanner },
