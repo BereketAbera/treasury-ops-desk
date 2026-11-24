@@ -24,7 +24,7 @@ const GROUPS: Group[] = [
   { key: 'approval', label: 'Awaiting approval', look: 'awaiting_approval', statuses: ['awaiting_approval'] },
   { key: 'progress', label: 'Processing or sent', look: 'processing', statuses: ['processing', 'sent'] },
   { key: 'completed', label: 'Completed', look: 'completed', statuses: ['completed'] },
-  { key: 'attention', label: 'Failed, rejected or returned', look: 'failed', statuses: ['failed', 'rejected', 'returned'] },
+  { key: 'attention', label: 'Failed, rejected, returned', look: 'failed', statuses: ['failed', 'rejected', 'returned'] },
   { key: 'unknown', label: 'Outcome unknown', look: 'outcome_unknown', statuses: ['outcome_unknown'] },
 ]
 
@@ -63,8 +63,10 @@ const totals = computed(() => {
         <dd class="num">{{ loading ? '...' : group.count }}</dd>
       </div>
     </dl>
-    <div class="summary__totals">
-      <h2 class="summary__heading">Target totals of the rows shown, per currency</h2>
+    <!-- Totals are one click away, so they cost the table one line and not three. -->
+    <details class="summary__totals" data-testid="summary-totals">
+      <summary>Totals per currency</summary>
+      <p class="summary__heading">Target amounts of the rows shown. Currencies are never added together.</p>
       <ul v-if="totals.length > 0" class="summary__list">
         <li v-for="total in totals" :key="total.code">
           <DsAmount :minor="total.minor" :currency="total.code" :decimals="decimalsOf(total.code)" />
@@ -72,7 +74,7 @@ const totals = computed(() => {
         </li>
       </ul>
       <p v-else class="muted summary__none">{{ loading ? 'Loading' : 'No rows shown.' }}</p>
-    </div>
+    </details>
   </section>
 </template>
 
@@ -80,33 +82,31 @@ const totals = computed(() => {
 @use '../ds/tokens/_tokens.scss' as t;
 
 .summary {
-  display: grid;
-  gap: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 
+  // The counts wrap together with the totals toggle, as items of the one strip.
   &__counts {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: var(--space-2);
-    margin: 0;
+    display: contents;
   }
 
   &__count {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-    min-width: 0;
-    padding: 6px var(--space-3);
-    border: 1px solid var(--color-divider);
-    border-left: 3px solid currentColor;
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
+    gap: 6px;
+    min-height: 24px;
+    white-space: nowrap;
 
     dt {
-      display: flex;
+      display: inline-flex;
       align-items: center;
       gap: var(--space-1);
-      min-width: 0;
       font-size: var(--font-size-xs);
       font-weight: var(--font-weight-bold);
     }
@@ -114,9 +114,8 @@ const totals = computed(() => {
     dd {
       margin: 0;
       color: var(--color-ink);
-      font-size: var(--font-size-lg);
+      font-size: var(--font-size-md);
       font-weight: var(--font-weight-bold);
-      line-height: 1.2;
     }
 
     &--warning {
@@ -141,31 +140,59 @@ const totals = computed(() => {
   }
 
   &__totals {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 2px var(--space-4);
+    margin-left: auto;
     min-width: 0;
-    padding: 6px var(--space-3);
-    border: 1px solid var(--color-divider);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
+    font-size: var(--font-size-sm);
+
+    summary {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      color: var(--color-primary);
+      font-size: var(--font-size-xs);
+      font-weight: var(--font-weight-bold);
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+      list-style: none;
+
+      &::-webkit-details-marker {
+        display: none;
+      }
+
+      &::after {
+        content: '';
+        width: 6px;
+        height: 6px;
+        margin-left: var(--space-2);
+        border-right: 1.5px solid currentColor;
+        border-bottom: 1.5px solid currentColor;
+        transform: translateY(-2px) rotate(45deg);
+      }
+    }
+
+    &[open] {
+      flex-basis: 100%;
+      margin-left: 0;
+
+      summary::after {
+        transform: translateY(1px) rotate(-135deg);
+      }
+    }
   }
 
   &__heading {
+    margin-top: var(--space-1);
     color: var(--color-muted);
     font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-bold);
   }
 
   &__list {
     display: flex;
     flex-wrap: wrap;
     gap: 2px var(--space-5);
-    margin: 0;
+    margin: var(--space-1) 0;
     padding: 0;
     list-style: none;
-    font-size: var(--font-size-sm);
 
     li {
       display: inline-flex;
@@ -178,25 +205,27 @@ const totals = computed(() => {
   &__rows {
     font-size: var(--font-size-xs);
   }
-
-  &__none {
-    font-size: var(--font-size-sm);
-  }
-}
-
-@media (max-width: t.$breakpoint-desk) {
-  .summary__counts {
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  }
 }
 
 @media (max-width: t.$breakpoint-phone) {
-  .summary__list {
-    display: grid;
-    width: 100%;
+  .summary {
+    padding: var(--space-2) var(--space-3);
 
-    li {
-      justify-content: space-between;
+    &__totals {
+      flex-basis: 100%;
+      margin-left: 0;
+
+      summary {
+        min-height: 44px;
+      }
+    }
+
+    &__list {
+      display: grid;
+
+      li {
+        justify-content: space-between;
+      }
     }
   }
 }

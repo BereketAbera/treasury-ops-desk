@@ -6,7 +6,7 @@ import SimulateMenu from './components/SimulateMenu.vue'
 import { DsButton, DsDialog, DsIcon, type IconName } from './ds'
 import { api } from './lib/http'
 import { clearSession } from './lib/storage'
-import { setScenario } from './mocks/scenario'
+import { resetScenario } from './demo'
 import { usePayoutsStore } from './stores/payouts'
 import { usePrefsStore } from './stores/prefs'
 import { useRequestLogStore } from './stores/requestLog'
@@ -22,8 +22,8 @@ const resetOpen = ref(false)
 const resetting = ref(false)
 
 const links: { to: string; label: string; icon: IconName; match: (path: string) => boolean }[] = [
-  { to: '/', label: 'Instructions', icon: 'list', match: (path) => path === '/' },
-  { to: '/batches/new', label: 'Batches', icon: 'layers', match: (path) => path.startsWith('/batches') },
+  { to: '/', label: 'Payout instructions', icon: 'list', match: (path) => path === '/' },
+  { to: '/batches', label: 'Batches', icon: 'layers', match: (path) => path.startsWith('/batches') },
   { to: '/payouts/new', label: 'New payout', icon: 'plus', match: (path) => path.startsWith('/payouts') },
 ]
 
@@ -40,10 +40,10 @@ function openRequestLog() {
 async function resetDemo() {
   resetting.value = true
   await api.request({ method: 'POST', path: '/api/demo/reset' })
-  setScenario('normal')
+  resetScenario()
   requestLog.clear()
   prefs.reset()
-  clearSession('kc.form.')
+  clearSession('qc.form.')
   payouts.clear()
   resetting.value = false
   resetOpen.value = false
@@ -58,9 +58,9 @@ async function resetDemo() {
 
     <header class="rail">
       <div class="rail__brand">
-        <span class="rail__mark" aria-hidden="true">K</span>
+        <span class="rail__mark" aria-hidden="true">Q</span>
         <span class="rail__names">
-          <span class="rail__company">Kestrel Commercial</span>
+          <span class="rail__company">Quillmere Commercial</span>
           <span class="rail__product">Payout desk</span>
         </span>
         <button
@@ -372,7 +372,7 @@ async function resetDemo() {
     }
 
     &__link {
-      height: 40px;
+      height: 44px;
     }
   }
 

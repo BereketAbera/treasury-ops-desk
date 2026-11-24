@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { DsAmount, DsBanner, DsButton, DsCopyButton, DsStatusBadge, statusLabel } from '@/ds'
+import { DsAmount, DsBanner, DsButton, DsCopyButton, DsStatusBadge, formatDecimal, statusLabel } from '@/ds'
 import { decimalsOf } from '@/lib/currencies'
-import { formatDateTime } from '@/lib/format'
+import { formatDateTime, ratePlaces } from '@/lib/format'
 import { api } from '@/lib/http'
 import { newCorrelationId } from '@/lib/ids'
 import { findRoute, routeLabel } from '@/lib/routes'
@@ -24,6 +24,7 @@ watch(
 )
 
 const route = computed(() => findRoute(props.payout.routeId))
+const rateText = computed(() => formatDecimal(props.payout.rate, ratePlaces(route.value?.rate)))
 const canRetry = computed(() => props.payout.status === 'failed' && props.payout.failure?.retryable === true)
 
 async function act(kind: 'check' | 'retry') {
@@ -106,7 +107,7 @@ async function act(kind: 'check' | 'retry') {
           <DsAmount :minor="payout.fee.amountMinor" :currency="payout.fee.currency" :decimals="decimalsOf(payout.fee.currency)" />
         </dd>
         <dt>Rate</dt>
-        <dd class="num">1 {{ payout.source.currency }} = {{ payout.rate }} {{ payout.target.currency }}</dd>
+        <dd class="num">1 {{ payout.source.currency }} = {{ rateText }} {{ payout.target.currency }}</dd>
         <dt>Route</dt>
         <dd>{{ route ? routeLabel(route) : payout.routeId }}</dd>
         <dt>Purpose code</dt>
@@ -122,7 +123,7 @@ async function act(kind: 'check' | 'retry') {
         <dt>Bank</dt>
         <dd>{{ payout.beneficiary.bank }}</dd>
         <dt>{{ route?.account.label ?? 'Account' }}</dt>
-        <dd class="mono">{{ payout.beneficiary.account }}</dd>
+        <dd class="mono mono--wrap">{{ payout.beneficiary.account }}</dd>
         <dt>Your reference</dt>
         <dd class="mono">{{ payout.reference }}</dd>
       </dl>
@@ -198,6 +199,7 @@ async function act(kind: 'check' | 'retry') {
 
     .mono {
       min-width: 0;
+      white-space: normal;
       overflow-wrap: anywhere;
     }
   }

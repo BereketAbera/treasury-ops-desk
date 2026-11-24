@@ -2,7 +2,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { DsIcon } from '@/ds'
-import { SCENARIOS, type ScenarioId } from '@/mocks/scenario'
+import { SCENARIOS, type ScenarioId } from '@/demo'
 import { useSimulateStore } from '@/stores/simulate'
 
 const simulate = useSimulateStore()
@@ -26,6 +26,12 @@ function onDocumentPointer(event: MouseEvent) {
   if (open.value && root.value && !root.value.contains(event.target as Node)) hide(false)
 }
 
+// Tabbing out of the panel closes it, so it never stays open over the page it was left for.
+function onFocusOut(event: FocusEvent) {
+  const next = event.relatedTarget
+  if (open.value && next instanceof Node && root.value && !root.value.contains(next)) hide(false)
+}
+
 function choose(id: ScenarioId) {
   simulate.set(id)
 }
@@ -35,7 +41,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocumentPointe
 </script>
 
 <template>
-  <div ref="root" class="simulate" @keydown.esc="hide(true)">
+  <div ref="root" class="simulate" @keydown.esc="hide(true)" @focusout="onFocusOut">
     <button
       ref="toggle"
       type="button"
@@ -184,10 +190,25 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocumentPointe
 }
 
 @media (max-width: t.$breakpoint-phone) {
-  .simulate__panel {
-    left: var(--space-4);
-    right: var(--space-4);
-    width: auto;
+  .simulate {
+    &__panel {
+      left: var(--space-4);
+      right: var(--space-4);
+      width: auto;
+    }
+
+    &__option input {
+      width: 24px;
+      height: 24px;
+      margin-top: 10px;
+    }
+
+    &__label,
+    &__try {
+      display: flex;
+      align-items: center;
+      min-height: 44px;
+    }
   }
 }
 </style>
