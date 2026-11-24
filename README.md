@@ -65,6 +65,7 @@ pnpm preview        # http://localhost:3401
 | `src/demo/` | Demo only: the boundary to the Simulate control |
 | `src/mocks/` | Mock API: handlers, data, seed, scenarios |
 | `src/stores/` | Pinia stores: payouts, request log, simulate, preferences |
+| `design/` | The script and the Inkscape commands that make the mark, the favicon and the social card. See `DESIGN-NOTES.md` |
 | `src/generated/` | `test-counts.json`, written by `scripts/test-counts.mjs` |
 | `src/pages/`, `src/components/` | The app's screens |
 | `tests/unit`, `tests/component`, `tests/e2e` | Tests |
