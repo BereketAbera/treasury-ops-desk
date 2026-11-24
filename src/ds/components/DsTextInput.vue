@@ -61,7 +61,7 @@ const model = defineModel<string>({ required: true })
   padding: 0 var(--space-2);
   border: 1px solid var(--color-control-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background-color: var(--color-surface);
   color: var(--color-ink);
   font: inherit;
 
@@ -75,7 +75,7 @@ const model = defineModel<string>({ required: true })
   }
 
   &:disabled {
-    background: var(--color-neutral-tint);
+    background-color: var(--color-neutral-tint);
     color: var(--color-muted);
     cursor: not-allowed;
   }

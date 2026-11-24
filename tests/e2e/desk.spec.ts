@@ -454,3 +454,52 @@ test.describe('instruction table', () => {
     await expect(page.getByTestId('row-count')).toContainText('Showing 60')
   })
 })
+
+test.describe('selects', () => {
+  /** What a select paints: its arrow, where the arrow sits, and the room the text leaves for it. */
+  async function arrows(page: Page) {
+    return page.locator('select.ds-select:visible').evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const style = getComputedStyle(node)
+        return {
+          name: node.id,
+          // Also true inside a disabled fieldset, where the property of the select itself stays false.
+          disabled: node.matches(':disabled'),
+          native: style.appearance !== 'none',
+          image: style.backgroundImage.startsWith('url("data:image/svg+xml'),
+          inset: style.backgroundPositionX,
+          textInset: style.paddingLeft,
+          room: Number.parseFloat(style.paddingRight),
+        }
+      }),
+    )
+  }
+
+  async function expectArrows(page: Page, atLeast: number, disabled: boolean) {
+    const found = await arrows(page)
+    expect(found.length).toBeGreaterThanOrEqual(atLeast)
+    for (const select of found) {
+      expect(select, JSON.stringify(select)).toMatchObject({ native: false, image: true, disabled })
+      // The arrow is as far from the right border as the text is from the left one.
+      expect(select.inset).toContain(select.textInset)
+      expect(select.room).toBeGreaterThanOrEqual(24)
+    }
+  }
+
+  test('every select shows its own arrow, inset like its text, and the text never runs under it', async ({ page }) => {
+    await openDesk(page)
+    await expectArrows(page, 3, false)
+    await openPrefilledForm(page)
+    await expectArrows(page, 2, false)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await openDesk(page)
+    await expectArrows(page, 4, false)
+  })
+
+  test('a locked select keeps its arrow', async ({ page }) => {
+    await openPrefilledForm(page, 'timeout-received')
+    await page.getByRole('button', { name: 'Submit payout' }).click()
+    await expect(page.getByRole('button', { name: 'Check status' })).toBeVisible({ timeout: 15_000 })
+    await expectArrows(page, 2, true)
+  })
+})

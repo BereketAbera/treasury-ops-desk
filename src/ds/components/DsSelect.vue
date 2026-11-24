@@ -40,11 +40,13 @@ const model = defineModel<string>({ required: true })
 </template>
 
 <style lang="scss">
-.ds-select {
-  padding-right: var(--space-5);
+// The box itself (border, height, padding) is shared with the text input. These rules come on top of it,
+// so they carry the element name: the arrow must not depend on the order the two styles are bundled in.
+select.ds-select {
+  padding-right: calc(var(--space-2) + 14px + var(--space-1));
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2352606D' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 6L8 10.5 12.5 6'/%3E%3C/svg%3E");
-  background-position: right 6px center;
+  background-position: right var(--space-2) center;
   background-size: 14px 14px;
   background-repeat: no-repeat;
 }
