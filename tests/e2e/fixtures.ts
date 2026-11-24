@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright'
-import { expect, test as base, type Page, type Request } from '@playwright/test'
+import { expect, test as base, type Locator, type Page, type Request } from '@playwright/test'
 
 /**
  * Every test fails if the page throws, or if the browser reports a
@@ -78,6 +78,45 @@ export async function expectNoAxeViolations(page: Page) {
 export async function expectNoSidewaysScroll(page: Page) {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
   expect(overflow, 'horizontal overflow in pixels').toBeLessThanOrEqual(0)
+}
+
+/**
+ * Breaks the next POST to a path, once: the request never leaves the browser ("request"), the API
+ * does the work but its answer never arrives ("answer"), or a gateway answers for it with a status.
+ */
+export async function breakNext(page: Page, path: RegExp, how: 'request' | 'answer' | number) {
+  await page.addInitScript(
+    ({ source, how }) => {
+      const real = window.fetch.bind(window)
+      window.fetch = async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href)
+        const hit = init?.method === 'POST' && new RegExp(source).test(url.pathname) && sessionStorage.getItem('test.broken') === null
+        if (!hit) return real(input, init)
+        sessionStorage.setItem('test.broken', '1')
+        const never = new Promise<Response>((_, reject) => init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))))
+        if (how === 'request') return never
+        await real(input, { ...init, signal: undefined })
+        return how === 'answer' ? never : new Response('<html></html>', { status: how, headers: { 'Content-Type': 'text/html' } })
+      }
+    },
+    { source: path.source, how },
+  )
+}
+
+/** Every payout the API has, not only the ones its list shows so far. */
+export async function bookedPayouts(page: Page): Promise<{ reference: string; pair: string }[]> {
+  return page.evaluate(() => {
+    const state = JSON.parse(sessionStorage.getItem('qc.db.v1') ?? '{}') as {
+      payouts: { reference: string; beneficiary: { name: string }; target: { currency: string; amountMinor: string } }[]
+    }
+    return state.payouts.map((item) => ({ reference: item.reference, pair: `${item.beneficiary.name} ${item.target.amountMinor} ${item.target.currency}` }))
+  })
+}
+
+export async function expectInView(page: Page, locator: Locator) {
+  const box = await locator.boundingBox()
+  const height = page.viewportSize()?.height ?? 0
+  expect(box && box.y >= 0 && box.y + box.height <= height, `in view: ${JSON.stringify(box)} of ${height}`).toBe(true)
 }
 
 export const FOOTER = 'Sample by Bereket A. · fictional data'

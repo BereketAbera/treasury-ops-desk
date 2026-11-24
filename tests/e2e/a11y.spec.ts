@@ -115,6 +115,16 @@ test.describe('accessibility: axe on every page and state', () => {
     await expectNoAxeViolations(page)
   })
 
+  test('batch upload: outcome unknown, and not received', async ({ page }) => {
+    await open(page, '/batches/new?sample=1&simulate=timeout-lost')
+    await page.getByTestId('submit-batch').click()
+    await expect(page.getByTestId('submission-status')).toContainText('We could not confirm this batch', { timeout: 15_000 })
+    await expectNoAxeViolations(page)
+    await page.getByTestId('check-status').click()
+    await expect(page.getByTestId('submission-status')).toContainText('Not received, safe to resend')
+    await expectNoAxeViolations(page)
+  })
+
   test('batch upload and batch result', async ({ page }) => {
     await open(page, '/batches/new?sample=1&simulate=partial-batch')
     await expect(page.getByTestId('batch-check-summary')).toBeVisible()
@@ -180,7 +190,7 @@ test.describe('phone, 390 pixels wide', () => {
   for (const path of pages) {
     test(`no sideways scroll and axe clean on ${path}`, { tag: path === '/' ? '@smoke' : [] }, async ({ page }) => {
       await open(page, path)
-      if (path === '/') await expect(page.getByTestId('row-count')).toContainText('Showing 60')
+      if (path === '/') await expect(page.getByTestId('row-count')).toContainText('Showing 15 of 60')
       if (path.startsWith('/payouts')) await expect(page.getByTestId('quote')).toBeVisible()
       if (path.startsWith('/batches/new')) await expect(page.getByTestId('batch-check-summary')).toBeVisible()
       await expectNoSidewaysScroll(page)
@@ -236,20 +246,38 @@ test.describe('phone, 390 pixels wide', () => {
     expect(await rejected.getByRole('region').evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
   })
 
-  test('the list shows 15 cards at a time with a count and a "Show more" button', async ({ page }) => {
+  test('the list shows 15 cards at a time with one count line and a "Show more" button', async ({ page }) => {
     await openDesk(page)
     const cards = page.locator('tr[data-row]')
+    const count = page.getByTestId('row-count')
     await expect(cards).toHaveCount(15)
-    await expect(page.getByTestId('shown-count')).toHaveText('15 of 60 shown')
+    await expect(count).toHaveText('Showing 15 of 60 instructions')
+    await expect(page.getByRole('main').getByText(/\d+ of \d+/)).toHaveCount(1)
     await page.getByTestId('show-more').click()
     await expect(cards).toHaveCount(30)
-    await expect(page.getByTestId('shown-count')).toHaveText('30 of 60 shown')
+    await expect(count).toHaveText('Showing 30 of 60 instructions')
     await expect(cards.nth(15)).toBeFocused()
 
+    await page.getByLabel('Status').selectOption('completed')
+    await expect(cards).toHaveCount(15)
+    await expect(count).toHaveText(/^Showing 15 of \d+ matching instructions, 60 in all$/)
     await page.getByLabel('Status').selectOption('failed')
     await expect(cards).toHaveCount(5)
     await expect(page.getByTestId('show-more')).toHaveCount(0)
-    await expect(page.getByTestId('shown-count')).toHaveText('5 of 5 shown')
+    await expect(count).toHaveText('Showing 5 of 60 instructions')
+  })
+
+  test('outcome unknown, for a payout and for a batch: no sideways scroll and axe clean', async ({ page }) => {
+    await openPrefilledForm(page, 'timeout-received')
+    await page.getByTestId('submit-payout').click()
+    await expect(page.getByTestId('submission-status')).toContainText('We could not confirm this payout')
+    await expectNoSidewaysScroll(page)
+    await expectNoAxeViolations(page)
+    await open(page, '/batches/new?sample=1&simulate=batch-timeout')
+    await page.getByTestId('submit-batch').click()
+    await expect(page.getByTestId('submission-status')).toContainText('We could not confirm this batch', { timeout: 15_000 })
+    await expectNoSidewaysScroll(page)
+    await expectNoAxeViolations(page)
   })
 
   test('the list can be sorted from a labelled select, and the hidden header row takes no focus', async ({ page }) => {

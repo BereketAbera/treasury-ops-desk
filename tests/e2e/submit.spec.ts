@@ -1,4 +1,4 @@
-import { expect, open, openPrefilledForm, record, test } from './fixtures'
+import { bookedPayouts, breakNext, expect, open, openDesk, openPrefilledForm, record, test } from './fixtures'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const keysOf = (requests: { headers(): Record<string, string> }[]) => requests.map((request) => request.headers()['idempotency-key'])
@@ -95,7 +95,7 @@ test.describe('payout form: submit', () => {
     await openPrefilledForm(page, 'fail-503')
     await page.getByTestId('submit-payout').click()
     const status = page.getByTestId('submission-status')
-    await expect(status).toContainText('Not sent: the service answered 503')
+    await expect(status).toContainText('Temporary failure: the service answered 503')
     await expect(status).toContainText('3 attempts failed')
     await expect(status).toContainText('Correlation ID cor_')
     await expect(page.getByTestId('attempts')).toHaveText('3')
@@ -210,6 +210,74 @@ test.describe('payout form: submit', () => {
     await expect(page.getByTestId('attempts')).toHaveText('2')
     expect(new Set(keysOf(posts)).size).toBe(1)
     expect(posts[posts.length - 1]?.headers()['x-attempt']).toBe('2')
+  })
+
+  test('while the form is locked it shows the rate the submit used, with no countdown, also after a reload', async ({ page }) => {
+    await openPrefilledForm(page, 'timeout-lost')
+    await expect(page.getByTestId('rate-countdown')).toContainText('Held for')
+    await page.getByTestId('submit-payout').click()
+    await expect(page.getByTestId('rate-countdown')).toHaveCount(0)
+    await expect(page.getByTestId('submission-status')).toContainText('We could not confirm this payout')
+    await expect(page.getByTestId('rate-countdown')).toHaveCount(0)
+    await expect(page.getByTestId('rate-used')).toHaveText('Submitted at this rate')
+    await expect(page.getByTestId('quote')).toContainText('1 USDC = 1,582.45 NGN')
+
+    await page.reload()
+    await expect(page.getByTestId('submission-status')).toContainText('This form was left while a submit was unresolved')
+    await expect(page.getByTestId('rate-countdown')).toHaveCount(0)
+    await expect(page.getByTestId('rate-used')).toHaveText('Submitted at this rate')
+    await expect(page.getByTestId('quote')).toContainText('1 USDC = 1,582.45 NGN')
+    await page.getByTestId('check-status').click()
+    await page.getByTestId('resend').click()
+    await expect(page.getByTestId('rate-used')).toHaveText('Accepted at this rate')
+  })
+
+  test('leaving the form while a submit is in flight loses nothing and opens no second submit', async ({ page }) => {
+    const posts = record(page, 'POST', '/api/payouts')
+    await openPrefilledForm(page, 'slow')
+    const key = await page.getByTestId('idempotency-key').textContent()
+    await page.getByTestId('submit-payout').click()
+    const rail = page.getByRole('navigation', { name: 'Main' })
+    await rail.getByRole('link', { name: 'Payout instructions' }).click()
+    await rail.getByRole('link', { name: 'New payout' }).click()
+    // Still the same submit, still in flight: no status to check yet and nothing to send again.
+    await expect(page.getByTestId('idempotency-key')).toHaveText(key ?? '')
+    await expect(page.getByTestId('submit-payout')).toHaveAttribute('aria-busy', 'true')
+    await expect(page.getByTestId('submission-status')).toContainText('Payout accepted')
+    expect(posts).toHaveLength(1)
+    expect(await bookedPayouts(page)).toHaveLength(61)
+
+    // Once its result has been shown, the form is a new one.
+    await rail.getByRole('link', { name: 'Payout instructions' }).click()
+    await expect(page.locator('tr[data-row]').first()).toContainText('PO-48261')
+    await rail.getByRole('link', { name: 'New payout' }).click()
+    await expect(page.getByTestId('submission-status')).toContainText('Nothing sent yet')
+    await expect(page.getByTestId('idempotency-key')).not.toHaveText(key ?? '')
+  })
+
+  test('a retry from the detail panel with an unknown outcome is not sent again before a status check', async ({ page }) => {
+    const retries = record(page, 'POST', /^\/api\/payouts\/PO-\d+\/retry$/)
+    await breakNext(page, /^\/api\/payouts\/PO-\d+\/retry$/, 'answer')
+    await openDesk(page, '/?status=failed')
+    const detail = page.getByTestId('payout-detail')
+    for (const row of await page.locator('tr[data-row]').all()) {
+      await row.click()
+      if ((await detail.getByRole('button', { name: 'Retry payout' }).count()) > 0) break
+    }
+    await detail.getByRole('button', { name: 'Retry payout' }).click()
+    const status = detail.getByTestId('submission-status')
+    await expect(status).toContainText('We could not confirm this retry', { timeout: 15_000 })
+    await expect(status).toBeFocused()
+    await expect(detail.getByRole('button', { name: 'Retry payout' })).toHaveCount(0)
+    await expect(detail).not.toContainText('Try the action again')
+
+    // Still unresolved after a reload, whatever the list says by then.
+    await page.reload()
+    await expect(status).toContainText('We could not confirm this retry')
+    await status.getByTestId('check-status').click()
+    await expect(detail).toContainText('The status check found this retry: it was received.')
+    expect(retries).toHaveLength(1)
+    expect(retries[0]?.headers()['idempotency-key']).toBeTruthy()
   })
 
   test('an expired rate locks Submit until the rate is refreshed', async ({ page }) => {
@@ -417,11 +485,15 @@ test.describe('mock API contract', () => {
       const changed = await call('/api/payouts', { ...payout, targetAmountMinor: '18650001' }, 'key-a')
       const sameReference = await call('/api/payouts', payout, 'key-b')
       const floatAmount = await call('/api/payouts', { ...payout, reference: 'CONTRACT-2', targetAmountMinor: '186500.00' }, 'key-c')
+      const named = (name: string, reference: string) => ({ ...payout, reference, beneficiary: { ...payout.beneficiary, name } })
+      const shortName = await call('/api/payouts', named('A', 'CONTRACT-4'), 'key-e')
+      const longName = await call('/api/payouts', named('A'.repeat(71), 'CONTRACT-5'), 'key-f')
       const item = { line: 2, itemKey: 'item-1', reference: 'CONTRACT-1', beneficiary: payout.beneficiary, routeId: 'USDC-KES', targetAmountMinor: '18650000', purposeCode: null }
       const batch = await call('/api/batches', { items: [item, { ...item, line: 7, itemKey: 'item-2', reference: 'CONTRACT-3' }] }, 'key-d')
       const one = await fetch(`/api/payouts/${first.body.id}`).then(async (response) => ({ status: response.status, body: await response.json() }))
       const none = await fetch('/api/payouts/PO-1').then((response) => response.status)
-      return { quote, noKey, first, again, changed, sameReference, floatAmount, batch, one, none }
+      const retryNoKey = await call('/api/batches/BT-301/retry', { items: [] })
+      return { quote, noKey, first, again, changed, sameReference, floatAmount, shortName, longName, batch, one, none, retryNoKey }
     })
     expect(result.quote.status).toBe(201)
     expect(result.quote.body.source.amountMinor).toMatch(/^\d+$/)
@@ -432,6 +504,11 @@ test.describe('mock API contract', () => {
     expect(result.changed).toMatchObject({ status: 409, body: { code: 'idempotency_key_reused' } })
     expect(result.sameReference).toMatchObject({ status: 409, body: { code: 'duplicate_reference', correlationId: 'cor_contract' } })
     expect(result.floatAmount).toMatchObject({ status: 422, body: { code: 'validation_failed' } })
+    // The form asks for a name of 2 to 70 characters, and so does the API.
+    for (const answer of [result.shortName, result.longName]) {
+      expect(answer).toMatchObject({ status: 422, body: { code: 'validation_failed', fields: { beneficiaryName: 'The name must be 2 to 70 characters.' } } })
+    }
+    expect(result.retryNoKey).toMatchObject({ status: 400, body: { code: 'idempotency_key_required' } })
     // A batch item with a reference that exists is rejected for good. The other item is booked and keeps its line number.
     expect(result.batch.status).toBe(201)
     expect(result.batch.body.items[0]).toMatchObject({ line: 2, status: 'rejected', payoutId: null, failure: { code: 'duplicate_reference', message: 'Reference already used.', retryable: false } })

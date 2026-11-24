@@ -1,4 +1,7 @@
-import { expect, open, openDesk, record, test } from './fixtures'
+import type { Page } from '@playwright/test'
+import { bookedPayouts, breakNext, chooseScenario, expect, expectInView, open, openDesk, record, test } from './fixtures'
+
+const keysOf = (requests: { headers(): Record<string, string> }[]) => new Set(requests.map((request) => request.headers()['idempotency-key']))
 
 test.describe('batches', () => {
   test('partial failure: 9 booked, 2 rejected, 1 unknown, and the retry sends only the 2 rejected', { tag: '@smoke' }, async ({ page }) => {
@@ -113,48 +116,24 @@ test.describe('batches', () => {
     await expect(page.getByTestId('row-count')).toHaveText('Showing 2 of 62 instructions', { timeout: 15_000 })
   })
 
-  test('a batch whose answer is lost is reported as unknown, found under recent batches, and not booked twice', async ({ page }) => {
-    const submits = record(page, 'POST', '/api/batches')
-    await open(page, '/batches/new?sample=1&simulate=batch-timeout')
-    await expect(page.getByTestId('simulate-banner')).toContainText('Next batch submit times out, batch received')
-    await page.getByTestId('submit-batch').click()
-
-    const main = page.getByRole('main')
-    await expect(main.getByText('We could not confirm this batch')).toBeVisible({ timeout: 15_000 })
-    await expect(main.getByText('No answer arrived. The batch may or may not have been received.')).toBeVisible()
-    await expect(main.getByText(/Do not upload the file again/)).toBeVisible()
-    const recent = page.getByRole('region', { name: 'Recent batches table' })
-    await expect(recent).toContainText('BT-301')
-    await expect(recent).toContainText('12 of 12 booked')
-    expect(submits).toHaveLength(1)
-
-    // Submitting again from the same page reuses the key: the API replays the first result.
-    await page.getByTestId('submit-batch').click()
-    await expect(page).toHaveURL(/\/batches\/BT-301$/)
-    await expect(page.getByTestId('batch-summary')).toHaveText('12 instructions: 12 booked, 0 rejected, 0 outcome unknown.')
-    expect(submits).toHaveLength(2)
-    expect(submits[1]?.headers()['idempotency-key']).toBe(submits[0]?.headers()['idempotency-key'])
-    expect((await submits[1]?.response())?.headers()['idempotent-replayed']).toBe('true')
-
-    await open(page, '/batches')
-    await expect(page.getByTestId('batches-table').locator('tbody tr')).toHaveCount(1)
-    await openDesk(page)
-    await expect(page.getByTestId('row-count')).toHaveText('Showing 72 of 72 instructions', { timeout: 15_000 })
-  })
-
   test('a 503 on a batch submit is retried with the same key, then offered again by hand', async ({ page }) => {
     const submits = record(page, 'POST', '/api/batches')
     await open(page, '/batches/new?sample=1&simulate=fail-503')
     await page.getByTestId('submit-batch').click()
-    const main = page.getByRole('main')
-    await expect(main.getByText('The batch was not accepted')).toBeVisible({ timeout: 15_000 })
-    await expect(main.getByText('Nothing was booked. Submitting again reuses the same idempotency key.')).toBeVisible()
+    const status = page.getByTestId('submission-status')
+    await expect(status).toContainText('Temporary failure: the service answered 503', { timeout: 15_000 })
+    await expect(status).toContainText('3 attempts failed')
     expect(submits).toHaveLength(3)
     expect(submits.map((request) => request.headers()['x-attempt'])).toEqual(['1', '2', '3'])
 
-    await page.getByTestId('submit-batch').click()
+    // Like the payout form: locked, and the only way on is a retry with the same key.
+    await expect(page.getByTestId('submit-batch')).toBeDisabled()
+    await expect(page.getByTestId('load-sample')).toBeDisabled()
+    await expect(page.getByTestId('choose-file')).toBeDisabled()
+    await page.getByTestId('retry-same-key').click()
     await expect(page.getByTestId('batch-summary')).toHaveText('12 instructions: 12 booked, 0 rejected, 0 outcome unknown.')
-    expect(new Set(submits.map((request) => request.headers()['idempotency-key'])).size).toBe(1)
+    expect(keysOf(submits).size).toBe(1)
+    expect(submits.map((request) => request.headers()['x-attempt'])).toEqual(['1', '2', '3', '4'])
   })
 
   test('the batches page lists every batch with its summary, and starts a new one', async ({ page }) => {
@@ -253,5 +232,242 @@ test.describe('batches', () => {
     await open(page, '/batches/BT-999')
     await expect(page.getByRole('heading', { name: 'Batch not found' })).toBeVisible()
     await expect(page.getByText('There is no batch with this ID')).toBeVisible()
+  })
+})
+
+/** Submits the sample batch and waits until its outcome is unknown. */
+async function submitUnknownBatch(page: Page, scenario: 'batch-timeout' | 'timeout-lost') {
+  await open(page, `/batches/new?sample=1&simulate=${scenario}`)
+  await expect(page.getByTestId('batch-check-summary')).toContainText('12 instructions, 12 valid')
+  await page.getByTestId('submit-batch').click()
+  await expect(page.getByTestId('submission-status')).toContainText('We could not confirm this batch', { timeout: 15_000 })
+}
+
+async function expectBatchLocked(page: Page) {
+  await expect(page.getByTestId('submission-status')).toContainText('We could not confirm this batch')
+  await expect(page.getByTestId('check-status')).toBeEnabled()
+  for (const control of ['submit-batch', 'choose-file', 'load-sample']) await expect(page.getByTestId(control), control).toBeDisabled()
+  await expect(page.locator('#batch-file')).toBeDisabled()
+}
+
+test.describe('batch submit with an unknown outcome', () => {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    test(`at ${viewport.width} by ${viewport.height} the notice is focused and in view, with the correlation ID and Check status`, async ({ page }) => {
+      await page.setViewportSize(viewport)
+      await submitUnknownBatch(page, 'batch-timeout')
+      const status = page.getByTestId('submission-status')
+      await expect(status).toBeFocused()
+      await expectInView(page, status)
+      await expect(status).toContainText('Do not resend. Check status.')
+      await expect(status).toContainText('Correlation ID cor_')
+      await expect(page.getByRole('main').getByRole('button', { name: /try again|resend|retry/i })).toHaveCount(0)
+      await expectBatchLocked(page)
+    })
+  }
+
+  test('received: the check finds the batch, opens its result, and nothing is sent or booked twice', async ({ page }) => {
+    const submits = record(page, 'POST', '/api/batches')
+    const checks = record(page, 'GET', /^\/api\/idempotency-keys\//)
+    await submitUnknownBatch(page, 'batch-timeout')
+    await page.getByTestId('check-status').click()
+    await expect(page).toHaveURL(/\/batches\/BT-301$/)
+    await expect(page.getByRole('heading', { level: 1 })).toBeFocused()
+    await expect(page.getByTestId('batch-arrival')).toContainText('Received')
+    await expect(page.getByTestId('batch-arrival')).toContainText('It was recorded before the answer was lost')
+    await expect(page.getByTestId('batch-summary')).toHaveText('12 instructions: 12 booked, 0 rejected, 0 outcome unknown.')
+    expect(submits).toHaveLength(1)
+    expect(checks).toHaveLength(1)
+    expect(new URL(checks[0]?.url() ?? 'http://x').pathname).toBe(`/api/idempotency-keys/${[...keysOf(submits)][0]}`)
+
+    await open(page, '/batches')
+    await expect(page.getByTestId('batches-table').locator('tbody tr')).toHaveCount(1)
+    await openDesk(page)
+    await expect(page.getByTestId('row-count')).toHaveText('Showing 72 of 72 instructions', { timeout: 15_000 })
+  })
+
+  test('not received: the check says so, and only then is a resend with the same key offered', async ({ page }) => {
+    const submits = record(page, 'POST', '/api/batches')
+    await submitUnknownBatch(page, 'timeout-lost')
+    await expect(page.getByTestId('resend')).toHaveCount(0)
+    await page.getByTestId('check-status').click()
+    const status = page.getByTestId('submission-status')
+    await expect(status).toContainText('Not received, safe to resend')
+    await expect(status).toBeFocused()
+    expect(await bookedPayouts(page)).toHaveLength(60)
+
+    await page.getByTestId('resend').click()
+    await expect(page.getByTestId('batch-summary')).toHaveText('12 instructions: 12 booked, 0 rejected, 0 outcome unknown.')
+    await expect(page.getByTestId('batch-arrival')).toHaveCount(0)
+    expect(submits).toHaveLength(2)
+    expect(keysOf(submits).size).toBe(1)
+    expect(submits.map((request) => request.headers()['x-attempt'])).toEqual(['1', '2'])
+    expect(submits[1]?.postDataJSON()).toEqual(submits[0]?.postDataJSON())
+    expect(await bookedPayouts(page)).toHaveLength(72)
+  })
+
+  test('no path creates a second batch while one is unresolved', async ({ page }) => {
+    const submits = record(page, 'POST', '/api/batches')
+    await submitUnknownBatch(page, 'batch-timeout')
+    const key = await page.getByTestId('idempotency-key').textContent()
+    const rail = page.getByRole('navigation', { name: 'Main' })
+
+    // On the page itself: keys, forced clicks, a control re-enabled by hand, a dropped file.
+    for (let press = 0; press < 5; press += 1) await page.keyboard.press('Enter')
+    await page.getByTestId('submit-batch').click({ force: true, clickCount: 2 })
+    await page.evaluate(() => document.querySelectorAll<HTMLButtonElement>('.batch button, .batch input').forEach((node) => (node.disabled = false)))
+    await page.getByTestId('submit-batch').click()
+    await page.getByTestId('load-sample').click()
+    const file = { name: 'other.csv', mimeType: 'text/csv', buffer: Buffer.from('reference,beneficiary,bank,account,route,amount,purpose\nOTHER-1,Nile Basin Traders,Lakeshore Commercial Bank,3100456789,USDC-UGX,7450000,') }
+    await page.getByLabel('Batch file (CSV)').setInputFiles(file)
+    const data = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer()
+      transfer.items.add(new File(['reference,beneficiary,bank,account,route,amount,purpose\nDROP-1,Nile Basin Traders,Lakeshore Commercial Bank,3100456789,USDC-UGX,7450000,'], 'dropped.csv', { type: 'text/csv' }))
+      return transfer
+    })
+    await page.getByTestId('batch-drop').dispatchEvent('drop', { dataTransfer: data })
+    await page.getByTestId('submit-batch').click({ force: true })
+    await expect(page.getByTestId('file-name')).toHaveText('sample-batch.csv')
+    await expect(page.getByTestId('batch-check-summary')).toContainText('12 instructions')
+
+    // Reload, Back and Forward, the rail, the batches page, Simulate, and a link that asks for a new sample.
+    const sent = submits[0]?.headers()['x-correlation-id'] ?? 'missing'
+    await page.reload()
+    await expectBatchLocked(page)
+    await expect(page.getByTestId('submission-status')).toContainText(sent)
+    await expect(page.getByTestId('batch-check-summary')).toContainText('sample-batch.csv: 12 instructions')
+    await rail.getByRole('link', { name: 'Payout instructions' }).click()
+    await page.goBack()
+    await expectBatchLocked(page)
+    await page.goBack()
+    await page.goForward()
+    await expectBatchLocked(page)
+    await rail.getByRole('link', { name: 'Batches' }).click()
+    await page.getByRole('main').getByRole('link', { name: 'New batch' }).click()
+    await expectBatchLocked(page)
+    await rail.getByRole('link', { name: 'Payout instructions' }).click()
+    await chooseScenario(page, 'Partial batch failure')
+    await page.getByTestId('simulate-toggle').click()
+    await page.locator('#simulate-panel').getByRole('link', { name: 'Open the sample batch' }).click()
+    await expect(page.getByTestId('unresolved-notice')).toContainText('One submit is still unresolved. Check its status first.')
+    await expectBatchLocked(page)
+    await page.goto('/batches/new?sample=1')
+    await expect(page.getByTestId('unresolved-notice')).toBeVisible()
+    await expect(page).toHaveURL(/\/batches\/new$/)
+    await expectBatchLocked(page)
+    await expect(page.getByTestId('idempotency-key')).toHaveText(key ?? '')
+
+    expect(submits).toHaveLength(1)
+    const booked = await bookedPayouts(page)
+    expect(booked).toHaveLength(72)
+    await page.getByTestId('check-status').click()
+    await expect(page.getByTestId('batch-arrival')).toContainText('Received')
+    expect(submits).toHaveLength(1)
+    const references = (await bookedPayouts(page)).map((item) => item.reference)
+    expect(new Set(references).size).toBe(72)
+
+    // Resolved: the form starts a new batch again.
+    await page.getByRole('link', { name: 'Upload another batch' }).click()
+    await expect(page.getByTestId('load-sample')).toBeEnabled()
+    await expect(page.getByTestId('file-name')).toHaveText('No file chosen')
+  })
+
+  test('while a batch is being sent, the form is locked and leaving the page does not lose it', async ({ page }) => {
+    const submits = record(page, 'POST', '/api/batches')
+    await open(page, '/batches/new?sample=1&simulate=slow')
+    await page.getByTestId('submit-batch').dblclick()
+    await expect(page.getByTestId('load-sample')).toBeDisabled()
+    await expect(page.getByTestId('choose-file')).toBeDisabled()
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Payout instructions' }).click()
+    await page.goBack()
+    await expect(page.getByTestId('load-sample')).toBeDisabled()
+    await expect(page).toHaveURL(/\/batches\/BT-301$/)
+    expect(submits).toHaveLength(1)
+
+    // Accepted while another page is open: it opens no page by itself, and the form says what happened.
+    await open(page, '/batches/new?sample=1')
+    await page.getByTestId('submit-batch').click()
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Payout instructions' }).click()
+    await expect.poll(async () => (await bookedPayouts(page)).length).toBe(84)
+    await expect(page.getByTestId('row-count')).toContainText('of 84', { timeout: 20_000 })
+    await expect(page).toHaveURL(/\/$/)
+    await page.goBack()
+    await expect(page.getByTestId('batch-arrival')).toContainText('BT-302')
+    await expect(page.getByTestId('load-sample')).toBeEnabled()
+    expect(submits).toHaveLength(2)
+  })
+
+  test('a replayed result says "already received, not sent twice"', async ({ page }) => {
+    const submits = record(page, 'POST', '/api/batches')
+    // The batch is booked, a gateway answers 504, and the automatic retry gets the first result back.
+    await breakNext(page, /^\/api\/batches$/, 504)
+    await open(page, '/batches/new?sample=1')
+    await page.getByTestId('submit-batch').click()
+    await expect(page.getByTestId('batch-arrival')).toContainText('Already received, not sent twice')
+    await expect(page.getByTestId('batch-summary')).toHaveText('12 instructions: 12 booked, 0 rejected, 0 outcome unknown.')
+    expect(submits).toHaveLength(2)
+    expect(keysOf(submits).size).toBe(1)
+    expect((await submits[1]?.response())?.headers()['idempotent-replayed']).toBe('true')
+    expect(await bookedPayouts(page)).toHaveLength(72)
+  })
+})
+
+test.describe('batch retry with an unknown outcome', () => {
+  async function partialBatch(page: Page, how: 'request' | 'answer') {
+    await breakNext(page, /^\/api\/batches\/BT-\d+\/retry$/, how)
+    await open(page, '/batches/new?sample=1&simulate=partial-batch')
+    await page.getByTestId('submit-batch').click()
+    await expect(page.getByTestId('batch-summary')).toContainText('9 booked, 2 rejected')
+    await page.getByTestId('retry-rejected').click()
+    await expect(page.getByTestId('submission-status')).toContainText('We could not confirm this retry', { timeout: 15_000 })
+  }
+
+  test('received: no second retry and no new batch until the check finds it', async ({ page }) => {
+    const retries = record(page, 'POST', /^\/api\/batches\/BT-\d+\/retry$/)
+    const submits = record(page, 'POST', '/api/batches')
+    await partialBatch(page, 'answer')
+    const status = page.getByTestId('submission-status')
+    await expect(status).toBeFocused()
+    await expectInView(page, status)
+    await expect(status).toContainText('Correlation ID cor_')
+    await expect(page.getByTestId('retry-rejected')).toBeDisabled()
+    await expect(page.getByTestId('group-rejected')).not.toContainText('no money moved')
+    expect(retries[0]?.headers()['idempotency-key']).toBeTruthy()
+
+    await page.reload()
+    await expect(page.getByTestId('submission-status')).toContainText('We could not confirm this retry')
+    await page.getByRole('link', { name: 'Upload another batch' }).click()
+    await expect(page.getByTestId('unresolved-retry')).toContainText('BT-301')
+    for (const control of ['choose-file', 'load-sample']) await expect(page.getByTestId(control), control).toBeDisabled()
+    await page.goto('/batches/new?sample=1')
+    await expect(page.getByTestId('load-sample')).toBeDisabled()
+    await expect(page.getByTestId('batch-check-summary')).toHaveCount(0)
+    await page.getByTestId('unresolved-retry').getByRole('link', { name: 'BT-301' }).click()
+
+    await page.getByTestId('check-status').click()
+    await expect(page.getByTestId('batch-notice')).toContainText('The status check found this retry')
+    await expect(page.getByTestId('batch-notice')).toContainText('Retried 2 instructions: 2 booked. The 9 booked earlier were not sent again.')
+    await expect(page.getByTestId('batch-summary')).toHaveText('12 instructions: 11 booked, 0 rejected, 1 outcome unknown.')
+    expect(retries).toHaveLength(1)
+    expect(submits).toHaveLength(1)
+    expect(await bookedPayouts(page)).toHaveLength(72)
+    await page.getByRole('link', { name: 'Upload another batch' }).click()
+    await expect(page.getByTestId('load-sample')).toBeEnabled()
+  })
+
+  test('not received: the resend carries the same key and the same two lines', async ({ page }) => {
+    const retries = record(page, 'POST', /^\/api\/batches\/BT-\d+\/retry$/)
+    await partialBatch(page, 'request')
+    await page.reload()
+    await page.getByTestId('check-status').click()
+    await expect(page.getByTestId('submission-status')).toContainText('Not received, safe to resend')
+    await expect(page.getByTestId('retry-rejected')).toBeDisabled()
+    await page.getByTestId('resend').click()
+    await expect(page.getByTestId('batch-notice')).toContainText('Retried 2 instructions: 2 booked.')
+    expect(retries).toHaveLength(1)
+    expect((retries[0]?.postDataJSON().items as { line: number }[]).map((item) => item.line)).toEqual([5, 10])
+    expect(await bookedPayouts(page)).toHaveLength(72)
   })
 })

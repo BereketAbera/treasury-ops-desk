@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { chooseScenario, expect, FOOTER, openDesk, test } from './fixtures'
+import { chooseScenario, expect, FOOTER, openDesk, openPrefilledForm, test } from './fixtures'
 
 // The WCAG 1.4.12 text-spacing overrides. Added through the CSS object model, because the page's
 // Content-Security-Policy rightly refuses an injected style element.
@@ -57,7 +57,41 @@ test.describe('the table gets the screen', () => {
   })
 })
 
+test.describe('Status is on screen at every width', () => {
+  for (const width of [320, 390, 720, 768, 800, 900, 940, 1000, 1001, 1024, 1100, 1101, 1200, 1280, 1361, 1425, 1426, 1440, 1920]) {
+    test(`at ${width} pixels, with no sideways scroll in the instruction table`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 })
+      await openDesk(page)
+      const look = async () =>
+        page.evaluate(() => {
+          const region = document.querySelector('.ds-table__scroll')!
+          const area = region.getBoundingClientRect()
+          const badges = Array.from(document.querySelectorAll('tr[data-row] .ds-badge')).map((node) => node.getBoundingClientRect())
+          return {
+            sideways: region.scrollWidth - region.clientWidth,
+            badges: badges.length,
+            outside: badges.filter((box) => box.width === 0 || box.left < area.left - 1 || box.right > Math.min(area.right, window.innerWidth) + 1).length,
+          }
+        })
+      const list = await look()
+      expect(list.badges).toBeGreaterThan(0)
+      expect(list).toMatchObject({ sideways: 0, outside: 0 })
+      // The same with a payout open: beside the table, or over it in a drawer.
+      await page.locator('tr[data-row]').first().click()
+      await expect(page.getByTestId('payout-detail')).toBeVisible()
+      expect(await look()).toMatchObject({ sideways: 0, outside: 0 })
+    })
+  }
+})
+
 test.describe('instruction table', () => {
+  test('the summary strip accounts for every instruction in the table', async ({ page }) => {
+    await openDesk(page)
+    const counts = await page.locator('.summary__count dd').allTextContents()
+    expect(counts.reduce((sum, text) => sum + Number(text), 0)).toBe(60)
+    await expect(page.locator('.summary__count').filter({ hasText: 'Draft or cancelled' }).locator('dd')).toHaveText('4')
+  })
+
   test('a first visit in a fresh browser shows the seeded table without a reload', { tag: '@smoke' }, async ({ page }) => {
     await page.goto('/')
     await expect(page.getByTestId('row-count')).toHaveText('Showing 60 of 60 instructions')
@@ -161,6 +195,8 @@ test.describe('instruction table', () => {
     await expect(rows.nth(1)).toBeFocused()
     await page.keyboard.press('End')
     await expect(rows.last()).toBeFocused()
+    await page.keyboard.press('Home')
+    await expect(rows.first()).toBeFocused()
   })
 
   test('Escape closes the detail panel and returns focus to its row', async ({ page }) => {
@@ -396,6 +432,18 @@ test.describe('instruction table', () => {
     await dialog.getByRole('button', { name: 'Reset demo data' }).click()
     await expect(dialog).toHaveCount(0)
     await expect(page.getByTestId('row-count')).toHaveText('Showing 60 of 60 instructions')
+  })
+
+  test('reset is not available while a submit is on its way', async ({ page }) => {
+    await openPrefilledForm(page, 'slow')
+    await page.getByTestId('submit-payout').click()
+    await page.getByRole('button', { name: 'Reset demo data' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Reset demo data?' })
+    await expect(dialog).toContainText('A submit is on its way. Wait for its result before a reset.')
+    await expect(dialog.getByRole('button', { name: 'Reset demo data' })).toBeDisabled()
+    await expect(dialog.getByRole('button', { name: 'Reset demo data' })).toBeEnabled()
+    await dialog.getByRole('button', { name: 'Reset demo data' }).click()
+    await expect(page.getByTestId('row-count')).toHaveText('Showing 60 of 60 instructions', { timeout: 20_000 })
   })
 
   test('an unknown address shows the not found page', async ({ page }) => {

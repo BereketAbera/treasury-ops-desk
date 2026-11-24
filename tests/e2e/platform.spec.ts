@@ -41,6 +41,8 @@ test.describe('headers, storage and Storybook', () => {
     await expect(page.getByTestId('row-count')).toContainText('Showing 60')
     await page.evaluate(() => {
       sessionStorage.setItem('qc.form.payout.v2', JSON.stringify({ draft: {} }))
+      sessionStorage.setItem('qc.form.batch.v1', JSON.stringify({ idempotencyKey: 'k', sent: true, attempts: 1, draft: { fileName: 'x.csv', rows: [{}] } }))
+      sessionStorage.setItem('qc.form.batch-retry.BT-301', '[]')
       sessionStorage.setItem('qc.requestlog.v2', JSON.stringify({ not: 'a log' }))
       sessionStorage.setItem('qc.prefs.v1', JSON.stringify(['compact']))
       sessionStorage.setItem('qc.scenario.v1', '"polling-outage"')
@@ -54,8 +56,28 @@ test.describe('headers, storage and Storybook', () => {
     await open(page, '/payouts/new')
     await expect(page.getByLabel('Your reference')).toHaveValue('')
     await expect(page.getByTestId('submission-status')).toContainText('Nothing sent yet')
+    await open(page, '/batches/new')
+    await expect(page.getByTestId('load-sample')).toBeEnabled()
     await open(page, '/batches')
     await expect(page.getByTestId('batches-empty')).toBeVisible()
+  })
+
+  test('a worker that refuses an update raises no page error, and the data loads', async ({ page, context }) => {
+    // The first page keeps the worker registered, so the second one finds it and asks for an update.
+    await open(page, '/')
+    const second = await context.newPage()
+    const errors: string[] = []
+    second.on('pageerror', (error) => errors.push(error.message))
+    await second.addInitScript(() => {
+      ServiceWorkerRegistration.prototype.update = () => {
+        sessionStorage.setItem('test.updates', '1')
+        return Promise.reject(new TypeError('Failed to update a ServiceWorker: Not found'))
+      }
+    })
+    await open(second, '/')
+    await expect(second.getByTestId('row-count')).toContainText('Showing 60')
+    expect(await second.evaluate(() => sessionStorage.getItem('test.updates')), 'an update was asked for').toBe('1')
+    expect(errors).toEqual([])
   })
 
   test('state is kept in sessionStorage only and nothing is written to localStorage', async ({ page }) => {
