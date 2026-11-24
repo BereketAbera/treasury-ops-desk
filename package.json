@@ -9,7 +9,7 @@
     "build": "pnpm tokens && vite build && storybook build -o dist/storybook --quiet",
     "build:app": "pnpm tokens && vite build",
     "preview": "vite preview --port 3401 --strictPort",
-    "storybook": "storybook dev -p 6006 --no-open",
+    "storybook": "storybook dev -p 3401 --no-open",
     "lint": "eslint .",
     "typecheck": "vue-tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",

@@ -152,8 +152,9 @@ import { TEST_COUNTS } from '@/lib/testCounts'
         <li>API data is only ever rendered as text. There is no <code>v-html</code> anywhere, and a lint rule rejects one if it is added.</li>
         <li>
           A Content-Security-Policy header is set for every app route: scripts, styles, fonts and connections from this origin
-          only, no inline script, no <code>eval</code>, no framing. The Storybook pages need inline script for Storybook's
-          own shell, so <code>/storybook/</code> has its own looser policy.
+          only, no inline script, no <code>eval</code>, no framing. Storybook's own shell uses inline script, and the stories
+          compile their templates in the browser, which needs <code>eval</code>. So <code>/storybook/</code> has its own looser
+          policy, and the app's policy allows neither.
         </li>
         <li>Amounts are integer minor units from the input to the request body: a bigint in code, an integer string on the wire. No float touches money.</li>
         <li>Nothing is written to <code>localStorage</code>. Session state is in <code>sessionStorage</code> and holds only fictional data.</li>

@@ -30,8 +30,10 @@ Developed with Node 24 and pnpm 10.
 ```sh
 pnpm install
 pnpm dev            # http://localhost:3401
-pnpm storybook      # http://localhost:6006
+pnpm storybook      # also http://localhost:3401, so stop the dev server first
 ```
+
+The "Components" link in the app points at `/storybook/`, which exists in the production build only.
 
 Production build, with Storybook under `dist/storybook`:
 
@@ -80,5 +82,5 @@ To run the suite against another address: `E2E_BASE_URL=https://example.test pnp
 ## Security notes
 
 - API data is rendered as text only. There is no `v-html`.
-- `vercel.json` sets a Content-Security-Policy for the app (same-origin scripts, styles and connections, no inline script, no `eval`, no framing) and a looser one for `/storybook/`, whose own shell needs inline script.
+- `vercel.json` sets a Content-Security-Policy for the app (same-origin scripts, styles and connections, no inline script, no `eval`, no framing) and a looser one for `/storybook/`: Storybook's shell uses inline script, and the stories compile their templates in the browser, which needs `eval`. The app's policy allows neither.
 - Amounts are integer minor units end to end: a `bigint` in code, an integer string in props, storage and request bodies.
