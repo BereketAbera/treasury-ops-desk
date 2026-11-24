@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { DsAmount, DsIcon, STATUS_LOOK, type StatusName } from '@/ds'
 import { CURRENCY_CODES, decimalsOf, type CurrencyCode } from '@/lib/currencies'
 import { plural } from '@/lib/format'
+import type { PayoutStatus } from '@/lib/types'
 import type { PayoutRow } from '@/stores/payouts'
 
 const props = defineProps<{
@@ -17,15 +18,17 @@ interface Group {
   key: string
   label: string
   look: StatusName
-  statuses: string[]
+  statuses: PayoutStatus[]
 }
 
+// Every status is in exactly one group, so the counts add up to the number of instructions.
 const GROUPS: Group[] = [
   { key: 'approval', label: 'Awaiting approval', look: 'awaiting_approval', statuses: ['awaiting_approval'] },
   { key: 'progress', label: 'Processing or sent', look: 'processing', statuses: ['processing', 'sent'] },
   { key: 'completed', label: 'Completed', look: 'completed', statuses: ['completed'] },
   { key: 'attention', label: 'Failed, rejected, returned', look: 'failed', statuses: ['failed', 'rejected', 'returned'] },
   { key: 'unknown', label: 'Outcome unknown', look: 'outcome_unknown', statuses: ['outcome_unknown'] },
+  { key: 'other', label: 'Draft or cancelled', look: 'draft', statuses: ['draft', 'cancelled'] },
 ]
 
 const counts = computed(() =>
@@ -136,6 +139,10 @@ const totals = computed(() => {
 
     &--unknown {
       color: var(--color-unknown-text);
+    }
+
+    &--neutral {
+      color: var(--color-neutral-text);
     }
   }
 
